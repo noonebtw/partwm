@@ -43,19 +43,48 @@ impl XlibState {
 		unsafe { xlib::XDefaultRootWindow(self.dpy()) } 
 	}
 
-	fn add_key<S: Into<String>>(mut self, key: S, mask: u32, handler: Box<dyn Fn(&Self, &XEvent)>)
+	fn add_key_with_handler<S: Into<String>>(mut self, key: S, mask: u32, handler: Box<dyn Fn(&Self, &XEvent)>)
 								-> Self {
 		let keycode = self.keycode(key);
-		self.keys.push((keycode, mask, Box::new(handler)));
 
-		unsafe {
-			xlib::XGrabKey(self.dpy(),
-						   keycode,
-						   mask,
-						   self.root(),
-						   1 /* true */,
-						   GrabModeAsync,
-						   GrabModeAsync);
+		self.keys.push((keycode, mask, Box::new(handler)));
+		self.grab_key(keycode, mask);
+
+		self
+	}
+
+	fn grab_key(&self, keycode: i32, mask: u32) -> &Self {
+		let numlock_mask = self.numlock_mask();
+		let modifiers = vec![0, LockMask, numlock_mask, LockMask|numlock_mask];
+		for &modifier in modifiers.iter() {
+			unsafe {
+				xlib::XGrabKey(self.dpy(),
+							keycode,
+							mask | modifier,
+							self.root(),
+							1 /* true */,
+							GrabModeAsync,
+							GrabModeAsync);
+			}
+		}
+
+		self
+	}
+
+	fn grab_button(&self, button: u32, mod_mask: u32, button_mask: i64) -> &Self {
+		let numlock_mask = self.numlock_mask();
+		let modifiers = vec![0, LockMask, numlock_mask, LockMask|numlock_mask];
+
+		for &modifier in modifiers.iter() {
+			unsafe {
+				xlib::XGrabButton(self.dpy(),
+								  button,
+								  mod_mask | modifier,
+								  self.root(),
+								  1 /*true */,
+								  button_mask as u32,
+								  GrabModeAsync, GrabModeAsync, 0, 0);
+			}
 		}
 
 		self
@@ -119,7 +148,7 @@ impl XlibState {
 	#[allow(non_snake_case)]
 	fn clean_mask(&self) -> u32 {
 		!(self.numlock_mask() | LockMask)
-			//& (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask)
+			& (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask)
 	}
 }
 
@@ -130,10 +159,10 @@ fn main() -> Result<()> {
 	let state = XlibState::new()?;
 
 	let state =
-		state.add_key("T", Mod1Mask, Box::new(|state, _| {
+		state.add_key_with_handler("T", Mod1Mask, Box::new(|state, _| {
 			let _ = state.spawn("xterm", &[]);
 		}))
-		.add_key("F1", Mod1Mask, Box::new(|state, event| {
+		.add_key_with_handler("F1", Mod1Mask, Box::new(|state, event| {
 			unsafe {
 				if event.key.subwindow != 0 {
 					xlib::XRaiseWindow(state.dpy(), event.key.subwindow);
@@ -141,31 +170,9 @@ fn main() -> Result<()> {
 			}
 		}));
 
-	unsafe {
-		xlib::XGrabKey(state.dpy(),
-					   state.keycode("F1"),
-					   Mod1Mask,
-					   state.root(),
-					   1 /* true */,
-					   GrabModeAsync,
-					   GrabModeAsync);
-
-		xlib::XGrabButton(state.dpy(),
-						  1,
-						  Mod1Mask,
-						  state.root(),
-						  1 /*true */,
-						  (ButtonPressMask | ButtonReleaseMask | PointerMotionMask) as u32,
-						  GrabModeAsync, GrabModeAsync, 0, 0);
-
-		xlib::XGrabButton(state.dpy(),
-						  3,
-						  Mod1Mask,
-						  state.root(),
-						  1 /*true */,
-						  (ButtonPressMask | ButtonReleaseMask | PointerMotionMask) as u32,
-						  GrabModeAsync, GrabModeAsync, 0, 0);
-	}
+	state.grab_key(state.keycode("F1"), Mod1Mask)
+		.grab_button(1, Mod1Mask, ButtonPressMask|ButtonReleaseMask|PointerMotionMask)
+		.grab_button(3, Mod1Mask, ButtonPressMask|ButtonReleaseMask|PointerMotionMask);
 
 	let mut attr: xlib::XWindowAttributes = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
 	let mut start: xlib::XButtonEvent = unsafe { std::mem::MaybeUninit::uninit().assume_init() };
