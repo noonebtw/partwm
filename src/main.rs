@@ -6,15 +6,35 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Arc;
 
-use x11::xlib::{ButtonPressMask, ButtonReleaseMask, GrabModeAsync, PointerMotionMask, XEvent};
-
 use x11::xlib::{
-    ControlMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, ShiftMask,
+    ButtonPressMask, ButtonReleaseMask, ControlMask, GrabModeAsync, LockMask, Mod1Mask, Mod2Mask,
+    Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, XEvent,
 };
 
 use nix::unistd::{close, execvp, fork, setsid, ForkResult};
 
-type Display = Arc<AtomicPtr<xlib::Display>>;
+#[derive(Clone)]
+struct Display(Arc<AtomicPtr<xlib::Display>>);
+
+impl Display {
+    fn get(&self) -> *mut xlib::Display {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+struct WMAtoms {
+    protocols: Option<xlib::Atom>,
+    delete: Option<xlib::Atom>,
+}
+
+impl Default for WMAtoms {
+    fn default() -> Self {
+        Self {
+            protocols: None,
+            delete: None,
+        }
+    }
+}
 
 struct XlibState {
     display: Display,
@@ -28,6 +48,7 @@ struct XlibState {
     // u64 : window to move
     // (i32, i32) : initial window position
     resize_window: Option<(u64, (i32, i32))>,
+    atoms: WMAtoms,
 }
 
 impl XlibState {
@@ -35,49 +56,42 @@ impl XlibState {
         let display = unsafe { xlib::XOpenDisplay(null()) };
         assert_ne!(display, null_mut());
 
-        let display = Display::new(AtomicPtr::new(display));
+        let display = Display {
+            0: Arc::new(AtomicPtr::new(display)),
+        };
 
-        Ok(Self {
-            display,
+        let state = Self {
+            display: display.clone(),
             keys: vec![],
             move_window: None,
             resize_window: None,
-        })
+            atoms: WMAtoms {
+                protocols: {
+                    Some(unsafe {
+                        let wm_protocols_str = CString::new("WM_PROTOCOLS").unwrap();
+                        xlib::XInternAtom(display.get(), wm_protocols_str.as_c_str().as_ptr(), 0)
+                    })
+                    .filter(|&atom| atom != 0)
+                },
+                delete: {
+                    Some(unsafe {
+                        let wm_delete_str = CString::new("WM_DELETE_WINDOW").unwrap();
+                        xlib::XInternAtom(display.get(), wm_delete_str.as_c_str().as_ptr(), 0)
+                    })
+                    .filter(|&atom| atom != 0)
+                },
+            },
+        };
+
+        Ok(state)
     }
 
     fn dpy(&self) -> *mut xlib::Display {
-        self.display.load(Ordering::SeqCst)
+        self.display.get()
     }
 
     fn root(&self) -> u64 {
         unsafe { xlib::XDefaultRootWindow(self.dpy()) }
-    }
-
-    #[allow(dead_code)]
-    fn cursor_pos(&self) -> (i32, i32) {
-        let mut di1 = 0;
-        let mut di2 = 0;
-        let mut dui = 0;
-        let mut win1 = 0;
-        let mut win2 = 0;
-        let mut x = 0;
-        let mut y = 0;
-
-        unsafe {
-            xlib::XQueryPointer(
-                self.dpy(),
-                self.root(),
-                &mut win1,
-                &mut win2,
-                &mut x,
-                &mut y,
-                &mut di1,
-                &mut di2,
-                &mut dui,
-            )
-        };
-
-        (x, y)
     }
 
     // mod1mask + mousebutton1 moves window
@@ -148,7 +162,7 @@ impl XlibState {
                     &mut wc,
                 );
 
-				xlib::XSync(self.dpy(), 0);
+                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -215,7 +229,7 @@ impl XlibState {
                     )
                 };
 
-				/*
+                /*
                 xlib::XWarpPointer(
                     self.dpy(),
                     0,
@@ -227,7 +241,7 @@ impl XlibState {
                     width - 1,
                     height - 1,
                 );
-				*/
+                */
 
                 let mut wc = xlib::XWindowChanges {
                     x: attr.x,
@@ -246,8 +260,7 @@ impl XlibState {
                     &mut wc,
                 );
 
-                //xlib::XFlush(self.dpy());
-				xlib::XSync(self.dpy(), 0);
+                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -280,31 +293,6 @@ impl XlibState {
             // handle window resizes
             self.handle_move_window(&event);
             self.handle_resize_window(&event);
-
-            /*
-            else if event.get_type() == xlib::ButtonPress && event.button.subwindow != 0 {
-                xlib::XGetWindowAttributes(state.dpy(), event.button.subwindow, &mut attr);
-                start = event.button;
-            }
-            else if event.get_type() == xlib::MotionNotify && start.subwindow != 0 {
-                let xdiff = event.button.x_root - start.x_root;
-                let ydiff = event.button.y_root - start.y_root;
-
-                xlib::XMoveResizeWindow(state.dpy(),
-                                        start.subwindow,
-                                        attr.x + if start.button == 1 { xdiff } else { 0 },
-                                        attr.y + if start.button == 1 { ydiff } else { 0 },
-                                        std::cmp::max(1, attr.width +
-                                                      if start.button == 3 { xdiff }
-                                                      else { 0 }) as u32,
-                                        std::cmp::max(1, attr.height +
-                                                      if start.button == 3 { ydiff }
-                                                      else { 0 }) as u32);
-            }
-            else if event.get_type() == xlib::ButtonRelease {
-                start.subwindow = 0;
-            }
-             */
         }
     }
 
@@ -410,6 +398,50 @@ impl XlibState {
         }
     }
 
+    fn check_for_protocol(&self, window: xlib::Window, proto: xlib::Atom) -> bool {
+        let mut protos: *mut xlib::Atom = null_mut();
+        let mut num_protos: i32 = 0;
+
+        unsafe {
+            if xlib::XGetWMProtocols(self.dpy(), window, &mut protos, &mut num_protos) != 0 {
+                for i in 0..num_protos {
+                    if *protos.offset(i as isize) == proto {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    fn send_event(&self, window: xlib::Window, proto: xlib::Atom) -> bool {
+        if self.check_for_protocol(window, proto) && self.atoms.protocols.is_some() {
+            let mut data = xlib::ClientMessageData::default();
+            data.set_long(0, proto as i64);
+            let mut event = XEvent {
+                client_message: xlib::XClientMessageEvent {
+                    type_: xlib::ClientMessage,
+                    serial: 0,
+                    display: self.dpy(),
+                    send_event: 0,
+                    window,
+                    format: 32,
+                    message_type: self.atoms.protocols.unwrap(),
+                    data,
+                },
+            };
+
+            unsafe {
+                xlib::XSendEvent(self.dpy(), window, 0, xlib::NoEventMask, &mut event);
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     fn numlock_mask(&self) -> u32 {
         unsafe {
             let modmap = xlib::XGetModifierMapping(self.dpy());
@@ -458,7 +490,27 @@ fn main() -> Result<()> {
                     xlib::XRaiseWindow(state.dpy(), event.key.subwindow);
                 }
             }),
-        );
+        )
+        .add_key_with_handler(
+            "Q",
+            Mod1Mask,
+            Box::new(|state, event| unsafe {
+                if event.key.subwindow != 0 {
+                    if state.atoms.delete.is_none()
+                        || !state.send_event(event.key.subwindow, state.atoms.delete.unwrap())
+                    {
+						println!("delete atmom: {:?}", state.atoms.delete);
+                        xlib::XKillClient(state.dpy(), event.key.subwindow);
+                    }
+                }
+            }),
+        ).add_key_with_handler("Q", Mod1Mask|ShiftMask, Box::new(|state, _event| {
+			unsafe {
+				xlib::XCloseDisplay(state.dpy());
+			}
+
+			std::process::exit(0);
+		}));
 
     state
         .grab_key(state.keycode("F1"), Mod1Mask)
