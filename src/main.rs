@@ -49,6 +49,27 @@ struct XlibState {
     // (i32, i32) : initial window position
     resize_window: Option<(u64, (i32, i32))>,
     atoms: WMAtoms,
+    event_handlers: Vec<Arc<dyn Fn(&mut Self, &XEvent)>>,
+}
+
+impl Default for XlibState {
+	fn default() -> Self {
+        let display = unsafe { xlib::XOpenDisplay(null()) };
+        assert_ne!(display, null_mut());
+
+        let display = Display {
+            0: Arc::new(AtomicPtr::new(display)),
+        };
+
+		Self {
+			display,
+			keys: vec![],
+			move_window: None,
+			resize_window: None,
+			atoms: WMAtoms::default(),
+			event_handlers: vec![],
+		}
+	}
 }
 
 impl XlibState {
@@ -60,7 +81,7 @@ impl XlibState {
             0: Arc::new(AtomicPtr::new(display)),
         };
 
-        let state = Self {
+        Ok(Self {
             display: display.clone(),
             keys: vec![],
             move_window: None,
@@ -81,9 +102,205 @@ impl XlibState {
                     .filter(|&atom| atom != 0)
                 },
             },
-        };
+            event_handlers: vec![],
+        }
+        // handle_move_window
+        .grab_button(
+            1,
+            Mod1Mask,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        )
+        .add_event_handler(|state, event| {
+            let clean_mask = state.clean_mask();
 
-        Ok(state)
+            if unsafe {
+                state.move_window.is_none()
+                    && event.get_type() == xlib::ButtonPress
+                    && event.button.button == 1
+                    && event.button.state & clean_mask == Mod1Mask & clean_mask
+                    && event.button.subwindow != 0
+            } {
+                let win_pos = unsafe {
+                    let mut attr: xlib::XWindowAttributes =
+                        std::mem::MaybeUninit::uninit().assume_init();
+                    xlib::XGetWindowAttributes(state.dpy(), event.button.subwindow, &mut attr);
+
+                    (attr.x, attr.y)
+                };
+
+                state.move_window = unsafe {
+                    Some((
+                        event.button.subwindow,
+                        (event.button.x, event.button.y),
+                        win_pos,
+                    ))
+                };
+            } else if unsafe {
+                state.move_window.is_some()
+                    && event.get_type() == xlib::ButtonRelease
+                    && event.button.button == 1
+            } {
+                state.move_window = None;
+            } else if state.move_window.is_some() && event.get_type() == xlib::MotionNotify {
+                let move_window = state.move_window.unwrap();
+
+                let attr = unsafe {
+                    let mut attr: xlib::XWindowAttributes =
+                        std::mem::MaybeUninit::uninit().assume_init();
+                    xlib::XGetWindowAttributes(state.dpy(), move_window.0, &mut attr);
+
+                    attr
+                };
+
+                let (x, y) = unsafe {
+                    (
+                        event.motion.x - move_window.1 .0 + move_window.2 .0,
+                        event.motion.y - move_window.1 .1 + move_window.2 .1,
+                    )
+                };
+
+                let mut wc = xlib::XWindowChanges {
+                    x,
+                    y,
+                    width: attr.width,
+                    height: attr.height,
+                    border_width: 0,
+                    sibling: 0,
+                    stack_mode: 0,
+                };
+
+                unsafe {
+                    xlib::XConfigureWindow(
+                        state.dpy(),
+                        state.move_window.unwrap().0,
+                        (xlib::CWX | xlib::CWY) as u32,
+                        &mut wc,
+                    );
+
+                    xlib::XSync(state.dpy(), 0);
+                }
+            }
+        })
+        // resize window handler
+        .grab_button(
+            3,
+            Mod1Mask,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        )
+        .add_event_handler(|state, event| {
+            let clean_mask = state.clean_mask();
+
+            if unsafe {
+                state.resize_window.is_none()
+                    && event.get_type() == xlib::ButtonPress
+                    && event.button.button == 3
+                    && event.button.state & clean_mask == Mod1Mask & clean_mask
+                    && event.button.subwindow != 0
+            } {
+                unsafe {
+                    let mut attr: xlib::XWindowAttributes =
+                        std::mem::MaybeUninit::uninit().assume_init();
+
+                    xlib::XGetWindowAttributes(state.dpy(), event.button.subwindow, &mut attr);
+
+                    state.resize_window = Some((event.button.subwindow, (attr.x, attr.y)));
+
+                    xlib::XWarpPointer(
+                        state.dpy(),
+                        0,
+                        event.button.subwindow,
+                        0,
+                        0,
+                        0,
+                        0,
+                        attr.width + attr.border_width - 1,
+                        attr.height + attr.border_width - 1,
+                    );
+                };
+            } else if unsafe {
+                state.resize_window.is_some()
+                    && event.get_type() == xlib::ButtonRelease
+                    && event.button.button == 3
+            } {
+                state.resize_window = None;
+            } else if state.resize_window.is_some() && event.get_type() == xlib::MotionNotify {
+                let resize_window = state.resize_window.unwrap();
+
+                let attr = unsafe {
+                    let mut attr: xlib::XWindowAttributes =
+                        std::mem::MaybeUninit::uninit().assume_init();
+                    xlib::XGetWindowAttributes(state.dpy(), resize_window.0, &mut attr);
+
+                    attr
+                };
+
+                unsafe {
+                    let (width, height) = {
+                        (
+                            std::cmp::max(
+                                1,
+                                event.motion.x - resize_window.1 .0 + 2 * attr.border_width + 1,
+                            ),
+                            std::cmp::max(
+                                1,
+                                event.motion.y - resize_window.1 .1 + 2 * attr.border_width + 1,
+                            ),
+                        )
+                    };
+
+                    let mut wc = xlib::XWindowChanges {
+                        x: attr.x,
+                        y: attr.y,
+                        width,
+                        height,
+                        border_width: attr.border_width,
+                        sibling: 0,
+                        stack_mode: 0,
+                    };
+
+                    xlib::XConfigureWindow(
+                        state.dpy(),
+                        resize_window.0,
+                        (xlib::CWWidth | xlib::CWHeight) as u32,
+                        &mut wc,
+                    );
+
+                    xlib::XSync(state.dpy(), 0);
+                }
+            }
+        })
+        .add_key_with_handler(
+            "T",
+            Mod1Mask,
+            |state, _| {
+                let _ = state.spawn("xterm", &[]);
+            },
+        )
+        .add_key_with_handler(
+            "Q",
+            Mod1Mask,
+            |state, event| unsafe {
+                if event.key.subwindow != 0 {
+                    if state.atoms.delete.is_none()
+                        || !state.send_event(event.key.subwindow, state.atoms.delete.unwrap())
+                    {
+                        println!("delete atmom: {:?}", state.atoms.delete);
+                        xlib::XKillClient(state.dpy(), event.key.subwindow);
+                    }
+                }
+            },
+        )
+        .add_key_with_handler(
+            "Q",
+            Mod1Mask | ShiftMask,
+            |state, _event| {
+                unsafe {
+                    xlib::XCloseDisplay(state.dpy());
+                }
+
+                std::process::exit(0);
+            },
+        ))
     }
 
     fn dpy(&self) -> *mut xlib::Display {
@@ -92,177 +309,6 @@ impl XlibState {
 
     fn root(&self) -> u64 {
         unsafe { xlib::XDefaultRootWindow(self.dpy()) }
-    }
-
-    // mod1mask + mousebutton1 moves window
-    fn handle_move_window(&mut self, event: &xlib::XEvent) {
-        let clean_mask = self.clean_mask();
-
-        if unsafe {
-            self.move_window.is_none()
-                && event.get_type() == xlib::ButtonPress
-                && event.button.button == 1
-                && event.button.state & clean_mask == Mod1Mask & clean_mask
-                && event.button.subwindow != 0
-        } {
-            let win_pos = unsafe {
-                let mut attr: xlib::XWindowAttributes =
-                    std::mem::MaybeUninit::uninit().assume_init();
-                xlib::XGetWindowAttributes(self.dpy(), event.button.subwindow, &mut attr);
-
-                (attr.x, attr.y)
-            };
-
-            self.move_window = unsafe {
-                Some((
-                    event.button.subwindow,
-                    (event.button.x, event.button.y),
-                    win_pos,
-                ))
-            };
-        } else if unsafe {
-            self.move_window.is_some()
-                && event.get_type() == xlib::ButtonRelease
-                && event.button.button == 1
-        } {
-            self.move_window = None;
-        } else if self.move_window.is_some() && event.get_type() == xlib::MotionNotify {
-            let move_window = self.move_window.unwrap();
-
-            let attr = unsafe {
-                let mut attr: xlib::XWindowAttributes =
-                    std::mem::MaybeUninit::uninit().assume_init();
-                xlib::XGetWindowAttributes(self.dpy(), move_window.0, &mut attr);
-
-                attr
-            };
-
-            let (x, y) = unsafe {
-                (
-                    event.motion.x - move_window.1 .0 + move_window.2 .0,
-                    event.motion.y - move_window.1 .1 + move_window.2 .1,
-                )
-            };
-
-            let mut wc = xlib::XWindowChanges {
-                x,
-                y,
-                width: attr.width,
-                height: attr.height,
-                border_width: 0,
-                sibling: 0,
-                stack_mode: 0,
-            };
-
-            unsafe {
-                xlib::XConfigureWindow(
-                    self.dpy(),
-                    self.move_window.unwrap().0,
-                    (xlib::CWX | xlib::CWY) as u32,
-                    &mut wc,
-                );
-
-                xlib::XSync(self.dpy(), 0);
-            }
-        }
-    }
-
-    // mod1mask + mousebutton3 resizes window
-    fn handle_resize_window(&mut self, event: &xlib::XEvent) {
-        let clean_mask = self.clean_mask();
-
-        if unsafe {
-            self.resize_window.is_none()
-                && event.get_type() == xlib::ButtonPress
-                && event.button.button == 3
-                && event.button.state & clean_mask == Mod1Mask & clean_mask
-                && event.button.subwindow != 0
-        } {
-            unsafe {
-                let mut attr: xlib::XWindowAttributes =
-                    std::mem::MaybeUninit::uninit().assume_init();
-
-                xlib::XGetWindowAttributes(self.dpy(), event.button.subwindow, &mut attr);
-
-                self.resize_window = Some((event.button.subwindow, (attr.x, attr.y)));
-
-                xlib::XWarpPointer(
-                    self.dpy(),
-                    0,
-                    event.button.subwindow,
-                    0,
-                    0,
-                    0,
-                    0,
-                    attr.width + attr.border_width - 1,
-                    attr.height + attr.border_width - 1,
-                );
-            };
-        } else if unsafe {
-            self.resize_window.is_some()
-                && event.get_type() == xlib::ButtonRelease
-                && event.button.button == 3
-        } {
-            self.resize_window = None;
-        } else if self.resize_window.is_some() && event.get_type() == xlib::MotionNotify {
-            let resize_window = self.resize_window.unwrap();
-
-            let attr = unsafe {
-                let mut attr: xlib::XWindowAttributes =
-                    std::mem::MaybeUninit::uninit().assume_init();
-                xlib::XGetWindowAttributes(self.dpy(), resize_window.0, &mut attr);
-
-                attr
-            };
-
-            unsafe {
-                let (width, height) = {
-                    (
-                        std::cmp::max(
-                            1,
-                            event.motion.x - resize_window.1 .0 + 2 * attr.border_width + 1,
-                        ),
-                        std::cmp::max(
-                            1,
-                            event.motion.y - resize_window.1 .1 + 2 * attr.border_width + 1,
-                        ),
-                    )
-                };
-
-                /*
-                xlib::XWarpPointer(
-                    self.dpy(),
-                    0,
-                    resize_window.0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    width - 1,
-                    height - 1,
-                );
-                */
-
-                let mut wc = xlib::XWindowChanges {
-                    x: attr.x,
-                    y: attr.y,
-                    width,
-                    height,
-                    border_width: attr.border_width,
-                    sibling: 0,
-                    stack_mode: 0,
-                };
-
-                xlib::XConfigureWindow(
-                    self.dpy(),
-                    resize_window.0,
-                    (xlib::CWWidth | xlib::CWHeight) as u32,
-                    &mut wc,
-                );
-
-                xlib::XSync(self.dpy(), 0);
-            }
-        }
     }
 
     fn main_loop(mut self) -> Result<Self> {
@@ -279,7 +325,7 @@ impl XlibState {
                 // cache clean mask, that way numlock_mask doesnt get called for every cmp
                 let clean_mask = self.clean_mask();
 
-                for (key, mask, handler) in self.keys.iter() {
+                for (key, mask, handler) in self.keys.iter().clone() {
                     // check if key and mask with any numlock state fit
                     if unsafe {
                         event.key.keycode == *key as u32
@@ -290,27 +336,35 @@ impl XlibState {
                 }
             }
 
-            // handle window resizes
-            self.handle_move_window(&event);
-            self.handle_resize_window(&event);
+            self.event_handlers
+                .clone()
+                .iter()
+                .for_each(|handler| handler(&mut self, &event));
         }
     }
 
-    fn add_key_with_handler<S: Into<String>>(
-        mut self,
-        key: S,
-        mask: u32,
-        handler: Box<dyn Fn(&Self, &XEvent)>,
-    ) -> Self {
-        let keycode = self.keycode(key);
-
-        self.keys.push((keycode, mask, Box::new(handler)));
-        self.grab_key(keycode, mask);
+    fn add_event_handler<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&mut Self, &XEvent) + 'static,
+    {
+        self.event_handlers.push(Arc::new(handler));
 
         self
     }
 
-    fn grab_key(&self, keycode: i32, mask: u32) -> &Self {
+    fn add_key_with_handler<S, F>(
+        mut self,
+        key: S,
+        mask: u32,
+        handler: F,
+    ) -> Self where S: Into<String>, F: Fn(&Self, &XEvent) + 'static {
+        let keycode = self.keycode(key);
+
+        self.keys.push((keycode, mask, Box::new(handler)));
+        self.grab_key(keycode, mask)
+    }
+
+    fn grab_key(self, keycode: i32, mask: u32) -> Self {
         let numlock_mask = self.numlock_mask();
         let modifiers = vec![0, LockMask, numlock_mask, LockMask | numlock_mask];
         for &modifier in modifiers.iter() {
@@ -330,11 +384,11 @@ impl XlibState {
         self
     }
 
-    fn grab_button(&self, button: u32, mod_mask: u32, button_mask: i64) -> &Self {
+    fn grab_button(self, button: u32, mod_mask: u32, button_mask: i64) -> Self {
         let numlock_mask = self.numlock_mask();
         let modifiers = vec![0, LockMask, numlock_mask, LockMask | numlock_mask];
 
-        for &modifier in modifiers.iter() {
+        modifiers.iter().for_each(|&modifier| {
             unsafe {
                 xlib::XGrabButton(
                     self.dpy(),
@@ -349,7 +403,7 @@ impl XlibState {
                     0,
                 );
             }
-        }
+        });
 
         self
     }
@@ -390,7 +444,7 @@ impl XlibState {
         }
     }
 
-    fn keycode<S: Into<String>>(&self, string: S) -> i32 {
+    fn keycode<S>(&self, string: S) -> i32 where S: Into<String> {
         let c_string = CString::new(string.into()).unwrap();
         unsafe {
             let keysym = xlib::XStringToKeysym(c_string.as_ptr());
@@ -473,57 +527,6 @@ fn main() -> Result<()> {
     println!("Hello, world!");
 
     let state = XlibState::new()?;
-
-    let state = state
-        .add_key_with_handler(
-            "T",
-            Mod1Mask,
-            Box::new(|state, _| {
-                let _ = state.spawn("xterm", &[]);
-            }),
-        )
-        .add_key_with_handler(
-            "F1",
-            Mod1Mask,
-            Box::new(|state, event| unsafe {
-                if event.key.subwindow != 0 {
-                    xlib::XRaiseWindow(state.dpy(), event.key.subwindow);
-                }
-            }),
-        )
-        .add_key_with_handler(
-            "Q",
-            Mod1Mask,
-            Box::new(|state, event| unsafe {
-                if event.key.subwindow != 0 {
-                    if state.atoms.delete.is_none()
-                        || !state.send_event(event.key.subwindow, state.atoms.delete.unwrap())
-                    {
-						println!("delete atmom: {:?}", state.atoms.delete);
-                        xlib::XKillClient(state.dpy(), event.key.subwindow);
-                    }
-                }
-            }),
-        ).add_key_with_handler("Q", Mod1Mask|ShiftMask, Box::new(|state, _event| {
-			unsafe {
-				xlib::XCloseDisplay(state.dpy());
-			}
-
-			std::process::exit(0);
-		}));
-
-    state
-        .grab_key(state.keycode("F1"), Mod1Mask)
-        .grab_button(
-            1,
-            Mod1Mask,
-            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        )
-        .grab_button(
-            3,
-            Mod1Mask,
-            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        );
 
     state.main_loop()?;
 
