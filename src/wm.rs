@@ -3,6 +3,7 @@ use std::{
     cell::{Cell, RefCell, RefMut},
     collections::HashMap,
     ffi::CString,
+    hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
     ptr::{null, null_mut},
     sync::Arc,
@@ -75,6 +76,14 @@ impl Default for WMAtoms {
 pub struct Client {
     window: Window,
 }
+
+impl PartialEq for Client {
+    fn eq(&self, other: &Self) -> bool {
+        self.window == other.window
+    }
+}
+
+impl Eq for Client {}
 
 pub struct XLibState {
     display: Display,
@@ -350,46 +359,48 @@ impl WMState {
 
             match event.get_type() {
                 xlib::MapRequest => {
-					let event = unsafe { &event.map_request };
+                    let event = unsafe { &event.map_request };
 
-					self.mut_state
-						.borrow_mut()
-						.clients
-						.entry(event.window)
-						.or_insert_with(|| {
-							unsafe { xlib::XMapWindow(self.dpy(), event.window) };
-							Arc::new(Client {
-								window: event.window,
-							})
-						});
+                    let _ = self.mut_state.try_borrow_mut().and_then(|mut_state| {
+                        RefMut::map(mut_state, |t| &mut t.clients)
+                            .entry(event.window)
+                            .or_insert_with(|| {
+                                unsafe { xlib::XMapWindow(self.dpy(), event.window) };
+                                Arc::new(Client {
+                                    window: event.window,
+                                })
+                            });
+
+                        Ok(())
+                    });
                 }
-				xlib::UnmapNotify => {
-					let event = unsafe { &event.unmap };
+                xlib::UnmapNotify => {
+                    let event = unsafe { &event.unmap };
 
-					println!("UnmapNotify: {:?}", event.window);
+                    println!("UnmapNotify: {:?}", event.window);
 
-					if event.send_event == 0 {
-						let _ = self.mut_state.try_borrow_mut().and_then(|mut_state| {
-							if mut_state.clients.contains_key(&event.window) {
-								RefMut::map(mut_state, |t| &mut t.clients).remove(&event.window);
-							}
+                    if event.send_event == 0 {
+                        let _ = self.mut_state.try_borrow_mut().and_then(|mut_state| {
+                            if mut_state.clients.contains_key(&event.window) {
+                                RefMut::map(mut_state, |t| &mut t.clients).remove(&event.window);
+                            }
 
-							Ok(())
-						});
-					}
-				}
+                            Ok(())
+                        });
+                    }
+                }
                 xlib::DestroyNotify => {
-					let event = unsafe { &event.destroy_window };
+                    let event = unsafe { &event.destroy_window };
 
-					println!("DestroyNotify: {:?}", event.window);
+                    println!("DestroyNotify: {:?}", event.window);
 
-					let _ = self.mut_state.try_borrow_mut().and_then(|mut_state| {
-						if mut_state.clients.contains_key(&event.window) {
-							RefMut::map(mut_state, |t| &mut t.clients).remove(&event.window);
-						}
+                    let _ = self.mut_state.try_borrow_mut().and_then(|mut_state| {
+                        if mut_state.clients.contains_key(&event.window) {
+                            RefMut::map(mut_state, |t| &mut t.clients).remove(&event.window);
+                        }
 
-						Ok(())
-					});
+                        Ok(())
+                    });
                 }
                 xlib::ConfigureRequest => {
                     let event = unsafe { &event.configure_request };
