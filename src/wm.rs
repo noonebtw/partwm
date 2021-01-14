@@ -13,9 +13,9 @@ use x11::{
     xlib::{
         Atom, ButtonPressMask, ButtonReleaseMask, CWEventMask, ControlMask, EnterWindowMask,
         FocusChangeMask, GrabModeAsync, LeaveWindowMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask,
-        Mod4Mask, Mod5Mask, PointerMotionMask, PropertyChangeMask, ShiftMask,
-        StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Window,
-        XDefaultScreen, XErrorEvent, XEvent, XInternAtom, XOpenDisplay, XRootWindow,
+        Mod4Mask, Mod5Mask, PointerMotionMask, PropertyChangeMask, ShiftMask, StructureNotifyMask,
+        SubstructureNotifyMask, SubstructureRedirectMask, Window, XDefaultScreen, XEvent,
+        XInternAtom, XOpenDisplay, XRootWindow,
     },
 };
 
@@ -297,6 +297,8 @@ impl Default for WMStateMut {
 pub struct WMState {
     xlib_state: XLibState,
     key_handlers: Vec<(i32, u32, Arc<dyn Fn(&Self, &XEvent)>)>,
+	// (button, mod_mask, button_mask)
+	buttons: Vec<(u32, u32, i64)>,
     event_handlers: Vec<Arc<dyn Fn(&Self, &XEvent)>>,
     mut_state: RefCell<WMStateMut>,
 }
@@ -308,6 +310,7 @@ impl WMState {
             mut_state: RefCell::new(WMStateMut::default()),
             key_handlers: vec![],
             event_handlers: vec![],
+			buttons: vec![],
         }
     }
 
@@ -357,7 +360,8 @@ impl WMState {
                 | StructureNotifyMask
                 | SubstructureNotifyMask
                 | EnterWindowMask
-                | PointerMotionMask;
+                | PointerMotionMask
+                | ButtonPressMask;
 
             xlib::XChangeWindowAttributes(state.dpy(), state.root(), CWEventMask, &mut wa);
 
@@ -376,21 +380,36 @@ impl WMState {
                 event
             };
 
+            self.event_handlers.iter().for_each(|handler| {
+                handler(&self, &event);
+            });
+
             match event.get_type() {
                 xlib::MapRequest => {
                     let event = unsafe { &event.map_request };
 
-                    let _ = self.mut_state.try_borrow_mut().and_then(|mut_state| {
-                        let (mut focused_client, mut clients) = RefMut::map_split(mut_state, |t| {
-                            (&mut t.focused_client, &mut t.clients)
-                        });
-
-                        clients.entry(event.window).or_insert_with(|| {
-                            unsafe { xlib::XMapWindow(self.dpy(), event.window) };
-
-                            let c = Arc::new(Client {
-                                window: event.window,
-                            });
+                    let _ = self
+                        .mut_state
+                        .try_borrow_mut()
+                        .ok()
+                        .and_then(|mut m| {
+                            if !m.clients.contains_key(&event.window) {
+                                Some(
+                                    m.clients
+                                        .entry(event.window)
+                                        .or_insert_with(|| {
+                                            Arc::new(Client {
+                                                window: event.window,
+                                            })
+                                        })
+                                        .clone(),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|c| {
+                            unsafe { xlib::XMapWindow(self.dpy(), c.window) };
 
                             unsafe {
                                 xlib::XSelectInput(
@@ -399,21 +418,18 @@ impl WMState {
                                     EnterWindowMask
                                         | FocusChangeMask
                                         | PropertyChangeMask
-                                        | StructureNotifyMask,
-                                )
-                            };
-
-                            if focused_client.upgrade().is_none() {
-                                *focused_client = Arc::downgrade(&c);
+                                        | StructureNotifyMask | ButtonPressMask,
+                                );
                             }
 
-                            self.focus_client(c.clone());
+							self.buttons.iter().for_each(|&(button, mod_mask, button_mask)| {
+								self.xlib_state.grab_button(c.window, button, mod_mask, button_mask);
+							});
 
-                            c
+                            self.focus_client(c);
+
+                            Some(())
                         });
-
-                        Ok(())
-                    });
                 }
                 xlib::UnmapNotify => {
                     let event = unsafe { &event.unmap };
@@ -478,21 +494,27 @@ impl WMState {
                             .and_then(|c| Some(c.clone()))
                     }) {
                         Some(client) => {
-                            let _ = self.mut_state.try_borrow_mut().and_then(|s| {
-                                let mut focused_client = RefMut::map(s, |s| &mut s.focused_client);
-
-                                let _ = focused_client.upgrade().and_then(|c| {
-                                    self.unfocus_client(c.clone());
-
-                                    Some(())
-                                });
-
-                                *focused_client = Arc::downgrade(&client);
-
-                                Ok(())
-                            });
-
                             self.focus_client(client);
+                        }
+                        None => {}
+                    };
+                }
+                xlib::ButtonPress => {
+                    let event = unsafe { &event.button };
+
+                    match self.mut_state.try_borrow().ok().and_then(|mut_state| {
+                        mut_state
+                            .clients
+                            .get(&event.subwindow)
+                            .and_then(|c| Some(c.clone()))
+                    }) {
+                        Some(client) => {
+                            self.focus_client(client.clone());
+                            println!("raising window {:?}", client.window);
+                            unsafe {
+                                xlib::XRaiseWindow(self.dpy(), client.window);
+                                xlib::XSync(self.dpy(), 0);
+                            }
                         }
                         None => {}
                     };
@@ -509,9 +531,7 @@ impl WMState {
                         }
                     })
                 }
-                _ => self.event_handlers.iter().for_each(|handler| {
-                    handler(&self, &event);
-                }),
+                _ => {}
             }
         }
     }
@@ -524,7 +544,8 @@ impl WMState {
         self.xlib_state.root()
     }
 
-    pub fn grab_button(self, button: u32, mod_mask: u32, button_mask: i64) -> Self {
+    pub fn grab_button(mut self, button: u32, mod_mask: u32, button_mask: i64) -> Self {
+		self.buttons.push((button, mod_mask, button_mask));
         self.xlib_state
             .grab_button(self.root(), button, mod_mask, button_mask);
 
@@ -571,6 +592,20 @@ impl WMState {
     }
 
     fn focus_client(&self, client: Arc<Client>) {
+        let _ = self.mut_state.try_borrow_mut().and_then(|m| {
+            let mut focused_client = RefMut::map(m, |m| &mut m.focused_client);
+            match focused_client.upgrade() {
+                Some(c) => {
+                    self.unfocus_client(c.clone());
+                }
+                _ => {}
+            }
+
+            *focused_client = Arc::downgrade(&client);
+
+            Ok(())
+        });
+
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
