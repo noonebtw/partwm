@@ -1,10 +1,11 @@
 // asdf
 use std::{
     cell::{Cell, RefCell, RefMut},
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     ffi::CString,
     io::{Error, ErrorKind, Result},
     ptr::{null, null_mut},
+    rc::{Rc, Weak as WeakRc},
     sync::{Arc, Weak},
 };
 
@@ -22,17 +23,17 @@ use x11::{
 use nix::unistd::{close, execvp, fork, setsid, ForkResult};
 
 #[derive(Clone)]
-pub struct Display(Arc<Cell<*mut x11::xlib::Display>>);
+pub struct Display(Rc<*mut x11::xlib::Display>);
 
 impl Display {
     pub fn new(display: *mut x11::xlib::Display) -> Self {
         Self {
-            0: Arc::new(Cell::new(display)),
+            0: Rc::new(display),
         }
     }
 
     pub fn get(&self) -> *mut x11::xlib::Display {
-        self.0.get()
+        *self.0
     }
 }
 
@@ -90,9 +91,41 @@ impl Default for WMAtoms {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ClientState {
+    size: (u32, u32),
+    position: (i32, i32),
+}
+
 #[derive(Clone, Debug)]
 pub struct Client {
     window: Window,
+    state: Cell<ClientState>,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            window: 0,
+            state: Cell::new(ClientState {
+                size: (0, 0),
+                position: (0, 0),
+            }),
+        }
+    }
+}
+
+impl Client {
+    pub fn new(window: xlib::Window) -> Self {
+        Self {
+            window,
+            ..Default::default()
+        }
+    }
+
+    pub fn get_state(&self) -> ClientState {
+        self.state.get()
+    }
 }
 
 impl PartialEq for Client {
@@ -279,8 +312,8 @@ pub struct WMStateMut {
     // u64 : window to move
     // (i32, i32) : initial window position
     resize_window: Option<(u64, (i32, i32))>,
-    clients: HashMap<Window, Arc<Client>>,
-    focused_client: Weak<Client>,
+    clients: HashMap<Window, Rc<Client>>,
+    focused_client: WeakRc<Client>,
 }
 
 impl Default for WMStateMut {
@@ -289,7 +322,7 @@ impl Default for WMStateMut {
             move_window: None,
             resize_window: None,
             clients: HashMap::new(),
-            focused_client: Weak::new(),
+            focused_client: WeakRc::new(),
         }
     }
 }
@@ -297,8 +330,8 @@ impl Default for WMStateMut {
 pub struct WMState {
     xlib_state: XLibState,
     key_handlers: Vec<(i32, u32, Arc<dyn Fn(&Self, &XEvent)>)>,
-	// (button, mod_mask, button_mask)
-	buttons: Vec<(u32, u32, i64)>,
+    // (button, mod_mask, button_mask)
+    buttons: Vec<(u32, u32, i64)>,
     event_handlers: Vec<Arc<dyn Fn(&Self, &XEvent)>>,
     mut_state: RefCell<WMStateMut>,
 }
@@ -310,7 +343,7 @@ impl WMState {
             mut_state: RefCell::new(WMStateMut::default()),
             key_handlers: vec![],
             event_handlers: vec![],
-			buttons: vec![],
+            buttons: vec![],
         }
     }
 
@@ -397,11 +430,7 @@ impl WMState {
                                 Some(
                                     m.clients
                                         .entry(event.window)
-                                        .or_insert_with(|| {
-                                            Arc::new(Client {
-                                                window: event.window,
-                                            })
-                                        })
+                                        .or_insert_with(|| Rc::new(Client::new(event.window)))
                                         .clone(),
                                 )
                             } else {
@@ -418,13 +447,22 @@ impl WMState {
                                     EnterWindowMask
                                         | FocusChangeMask
                                         | PropertyChangeMask
-                                        | StructureNotifyMask | ButtonPressMask,
+                                        | StructureNotifyMask,
                                 );
                             }
 
-							self.buttons.iter().for_each(|&(button, mod_mask, button_mask)| {
-								self.xlib_state.grab_button(c.window, button, mod_mask, button_mask);
-							});
+                            self.buttons
+                                .iter()
+                                .for_each(|&(button, mod_mask, button_mask)| {
+                                    self.xlib_state.grab_button(
+                                        c.window,
+                                        button,
+                                        mod_mask,
+                                        button_mask,
+                                    );
+                                });
+
+                            self.arrange_clients();
 
                             self.focus_client(c);
 
@@ -445,6 +483,8 @@ impl WMState {
                             Ok(())
                         });
                     }
+
+                    self.arrange_clients();
                 }
                 xlib::DestroyNotify => {
                     let event = unsafe { &event.destroy_window };
@@ -458,28 +498,36 @@ impl WMState {
 
                         Ok(())
                     });
+
+                    self.arrange_clients();
                 }
                 xlib::ConfigureRequest => {
                     let event = unsafe { &event.configure_request };
 
-                    let mut wc = xlib::XWindowChanges {
-                        x: event.x,
-                        y: event.y,
-                        width: event.width,
-                        height: event.height,
-                        border_width: event.border_width,
-                        sibling: event.above,
-                        stack_mode: event.detail,
-                    };
+                    match self.mut_state.borrow_mut().clients.entry(event.window) {
+                        Entry::Occupied(entry) => {
+							self.configure_client(entry.get().clone());
+                        }
+                        _ => {
+                            let mut wc = xlib::XWindowChanges {
+                                x: event.x,
+                                y: event.y,
+                                width: event.width,
+                                height: event.height,
+                                border_width: event.border_width,
+                                sibling: event.above,
+                                stack_mode: event.detail,
+                            };
 
-                    unsafe {
-                        xlib::XConfigureWindow(
-                            self.dpy(),
-                            event.window,
-                            event.value_mask as u32,
-                            &mut wc,
-                        );
-                        xlib::XSync(self.dpy(), 0);
+                            unsafe {
+                                xlib::XConfigureWindow(
+                                    self.dpy(),
+                                    event.window,
+                                    event.value_mask as u32,
+                                    &mut wc,
+                                );
+                            }
+                        }
                     }
                 }
                 xlib::EnterNotify => {
@@ -545,7 +593,7 @@ impl WMState {
     }
 
     pub fn grab_button(mut self, button: u32, mod_mask: u32, button_mask: i64) -> Self {
-		self.buttons.push((button, mod_mask, button_mask));
+        self.buttons.push((button, mod_mask, button_mask));
         self.xlib_state
             .grab_button(self.root(), button, mod_mask, button_mask);
 
@@ -574,7 +622,7 @@ impl WMState {
         self
     }
 
-    fn unfocus_client(&self, client: Arc<Client>) {
+    fn unfocus_client(&self, client: Rc<Client>) {
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
@@ -591,7 +639,7 @@ impl WMState {
         }
     }
 
-    fn focus_client(&self, client: Arc<Client>) {
+    fn focus_client(&self, client: Rc<Client>) {
         let _ = self.mut_state.try_borrow_mut().and_then(|m| {
             let mut focused_client = RefMut::map(m, |m| &mut m.focused_client);
             match focused_client.upgrade() {
@@ -601,7 +649,7 @@ impl WMState {
                 _ => {}
             }
 
-            *focused_client = Arc::downgrade(&client);
+            *focused_client = Rc::downgrade(&client);
 
             Ok(())
         });
@@ -631,7 +679,80 @@ impl WMState {
     }
 
     fn arrange_clients(&self) {
-        let (screen_w, screen_h) = { (1, 1) };
+        let (screen_w, screen_h) = unsafe {
+            (
+                xlib::XDisplayWidth(self.dpy(), self.xlib_state.screen()),
+                xlib::XDisplayHeight(self.dpy(), self.xlib_state.screen()),
+            )
+        };
+
+        let clients_num = self.mut_state.borrow().clients.len() as i32;
+
+        if clients_num != 0 {
+            let window_w = screen_w / clients_num;
+
+            for (i, (_, client)) in self.mut_state.borrow().clients.iter().enumerate() {
+                let client_state = ClientState {
+                    size: (window_w as u32, screen_h as u32),
+                    position: (window_w * i as i32, 0),
+                };
+
+                client.state.replace(client_state);
+
+                let mut wc = xlib::XWindowChanges {
+                    x: client_state.position.0,
+                    y: client_state.position.1,
+                    width: client_state.size.0 as i32,
+                    height: client_state.size.1 as i32,
+                    border_width: 0,
+                    sibling: 0,
+                    stack_mode: 0,
+                };
+
+                unsafe {
+                    xlib::XConfigureWindow(
+                        self.dpy(),
+                        client.window,
+                        (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
+                        &mut wc,
+                    );
+
+					self.configure_client(client.clone());
+
+                    xlib::XSync(self.dpy(), 0);
+                }
+            }
+        }
+    }
+
+    fn configure_client(&self, client: Rc<Client>) {
+        let client_state = client.get_state();
+
+        let mut event = xlib::XConfigureEvent {
+            type_: xlib::ConfigureNotify,
+            display: self.dpy(),
+            event: client.window,
+            window: client.window,
+            x: client_state.position.0,
+            y: client_state.position.1,
+            width: client_state.size.0 as i32,
+            height: client_state.size.1 as i32,
+            border_width: 0,
+            override_redirect: 0,
+            send_event: 0,
+            serial: 0,
+            above: 0,
+        };
+
+        unsafe {
+            xlib::XSendEvent(
+                self.dpy(),
+                client.window,
+                0,
+                StructureNotifyMask,
+                &mut event as *mut _ as *mut XEvent,
+            );
+        }
     }
 
     fn handle_move_window(&self, event: &XEvent) {
