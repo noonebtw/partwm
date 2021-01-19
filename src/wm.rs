@@ -366,7 +366,18 @@ impl WMState {
 						.next()
 						.and_then(|(_, c)| Some(c.clone())))
 					.and_then(|c| {
-						mstate.master_stack.push(Rc::downgrade(&c));
+						let weak_c = Rc::downgrade(&c);
+						if mstate
+							.master_stack
+							.iter()
+							.filter(|w| w.ptr_eq(&weak_c))
+							.count() == 0
+						{
+							mstate.master_stack.push(Rc::downgrade(&c));
+						} else {
+							mstate.master_stack.retain(|w| !w.ptr_eq(&weak_c));
+						}
+
 						Some(())
 					})
 				});
@@ -746,17 +757,7 @@ impl WMState {
 				}
 
 				let window_w = {
-					let has_aux_stack = state
-						.clients
-						.iter()
-						.filter(|&(_, client)| {
-							state
-								.master_stack
-								.iter()
-								.filter(|weak_client| weak_client.upgrade().unwrap() != *client)
-								.count() != 0
-						})
-						.count() != 0;
+					let has_aux_stack = state.clients.len() != state.master_stack.len();
 
 					if has_aux_stack {
 						screen_w / 2
