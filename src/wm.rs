@@ -95,6 +95,7 @@ impl Default for WMAtoms {
 #[derive(Clone, Debug)]
 pub struct Client {
 	window: Window,
+	floating: bool,
 	size: (i32, i32),
 	position: (i32, i32),
 }
@@ -103,6 +104,7 @@ impl Default for Client {
 	fn default() -> Self {
 		Self {
 			window: 0,
+			floating: false,
 			size: (0, 0),
 			position: (0, 0),
 		}
@@ -346,13 +348,19 @@ impl WMState {
 				Mod1Mask,
 				ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
 			)
-			//.add_event_handler(Self::handle_move_window)
+			.grab_button(
+				2,
+				Mod1Mask,
+				ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+			)
 			.grab_button(
 				3,
 				Mod1Mask,
 				ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
 			)
-			//.add_event_handler(Self::handle_resize_window)
+			.add_event_handler(Self::handle_toggle_floating)
+			.add_event_handler(Self::handle_move_window)
+			.add_event_handler(Self::handle_resize_window)
 			.add_key_handler("T", Mod1Mask, |state, _| {
 				println!("spawning terminal");
 				let _ = state.spawn("xterm", &[]);
@@ -366,7 +374,10 @@ impl WMState {
 						.next()
 						.and_then(|(_, c)| Some(c.clone())))
 					.and_then(|c| {
+						c.borrow_mut().floating = false;
+
 						let weak_c = Rc::downgrade(&c);
+
 						if mstate
 							.master_stack
 							.iter()
@@ -738,6 +749,7 @@ impl WMState {
 	}
 
 	fn arrange_clients(&self) {
+		info!("[arrange_clients] refreshing stack");
 		self.refresh_stack();
 
 		let (screen_w, screen_h) = unsafe {
@@ -752,12 +764,30 @@ impl WMState {
 			if !state.clients.is_empty() {
 				// if master stack is empty, populate with first entry in clients list
 				if state.master_stack.is_empty() {
-					let first_client = Rc::downgrade(state.clients.iter().next().unwrap().1);
-					state.master_stack.push(first_client);
+					info!(
+						"[arrange_clients] master stack was empty, pushing first client if exists:"
+					);
+					let _ = state
+						.clients
+						.iter()
+						.filter(|(_, c)| !c.borrow().floating)
+						.next()
+						.map(|(_, c)| Rc::downgrade(c))
+						.and_then(|w| {
+							info!("[arrange_clients] {:#?}", w);
+							Some(state.master_stack.push(w))
+						});
 				}
 
 				let window_w = {
-					let has_aux_stack = state.clients.len() != state.master_stack.len();
+					// if clients and master_stack are the same length there is no windows in the aux
+					// stack, in the future might have to change this to filter for
+					// transient/floating windows
+					let has_aux_stack = state
+						.clients
+						.iter()
+						.filter(|&(_, c)| !c.borrow().floating)
+						.count() != state.master_stack.len();
 
 					if has_aux_stack {
 						screen_w / 2
@@ -801,23 +831,28 @@ impl WMState {
 					}
 				}
 
-				// filter only windows that arent inthe master stack, essentially aux stack
-				for (i, (_, client)) in state
-					.clients
-					.iter()
-					.filter(|&(_, c)| {
+				let (aux_windows, aux_window_count) = {
+					let filter = state.clients.iter().filter(|&(_, c)| {
 						state
 							.master_stack
 							.iter()
 							.filter(|w| w.upgrade().unwrap() == *c)
-							.count() == 0
-					})
-					.enumerate()
-				{
+							.count() == 0 && !c.borrow().floating
+					});
+
+					(filter.clone(), filter.count())
+				};
+
+				info!(
+					"[arrange_clients] {} client(s) in aux stack",
+					aux_window_count
+				);
+
+				// filter only windows that arent inthe master stack, essentially aux stack
+				for (i, (_, client)) in aux_windows.enumerate() {
 					let mut wc = {
 						let mut client = client.borrow_mut();
-						let window_h =
-							screen_h / (state.clients.len() - state.master_stack.len()) as i32;
+						let window_h = screen_h / aux_window_count as i32;
 
 						client.size = (window_w, window_h);
 						client.position = (window_w, window_h * i as i32);
@@ -854,15 +889,9 @@ impl WMState {
 
 	fn refresh_stack(&self) {
 		Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-			state.master_stack = state
+			state
 				.master_stack
-				.iter()
-				.filter_map(|weak_client| {
-					weak_client
-						.upgrade()
-						.and_then(|_| Some(weak_client.clone()))
-				})
-				.collect();
+				.retain(|c| c.upgrade().filter(|c| !c.borrow().floating).is_some());
 
 			Some(())
 		});
@@ -900,10 +929,37 @@ impl WMState {
 		}
 	}
 
+	fn handle_toggle_floating(&self, event: &XEvent) {
+		if event.get_type() == xlib::ButtonPress {
+			let event = unsafe { event.button };
+			let clean_mask = self.xlib_state.clean_mask();
+
+			if event.button == 2
+				&& event.state & clean_mask == Mod1Mask & clean_mask
+				&& event.subwindow != 0
+			{
+				self.mut_state
+					.borrow_mut()
+					.clients
+					.entry(event.subwindow)
+					.and_modify(|c| {
+						let mut c = c.borrow_mut();
+						info!(
+							"[handle_toggle_floating] {:#?} floating -> {:?}",
+							c, !c.floating
+						);
+						c.floating = !c.floating;
+					});
+
+				self.arrange_clients();
+			}
+		}
+	}
+
 	fn handle_move_window(&self, event: &XEvent) {
 		let clean_mask = self.xlib_state.clean_mask();
 
-		let move_window = &mut self.mut_state.borrow_mut().move_window;
+		let move_window = self.mut_state.borrow_mut().move_window;
 
 		if unsafe {
 			move_window.is_none()
@@ -920,19 +976,27 @@ impl WMState {
 				(attr.x, attr.y)
 			};
 
-			*move_window = Some(unsafe {
+			self.mut_state.borrow_mut().move_window = Some(unsafe {
 				(
 					event.button.subwindow,
 					(event.button.x, event.button.y),
 					win_pos,
 				)
 			});
+
+			self.mut_state
+				.borrow_mut()
+				.clients
+				.entry(unsafe { event.button.subwindow })
+				.and_modify(|c| c.borrow_mut().floating = true);
+
+			self.arrange_clients();
 		} else if unsafe {
 			move_window.is_some()
 				&& event.get_type() == xlib::ButtonRelease
 				&& event.button.button == 1
 		} {
-			*move_window = None;
+			self.mut_state.borrow_mut().move_window = None;
 		} else if move_window.is_some() && event.get_type() == xlib::MotionNotify {
 			let move_window = move_window.unwrap();
 
@@ -977,7 +1041,7 @@ impl WMState {
 	fn handle_resize_window(&self, event: &XEvent) {
 		let clean_mask = self.xlib_state.clean_mask();
 
-		let resize_window = &mut self.mut_state.borrow_mut().resize_window;
+		let resize_window = self.mut_state.borrow().resize_window;
 
 		if unsafe {
 			resize_window.is_none()
@@ -992,7 +1056,8 @@ impl WMState {
 
 				xlib::XGetWindowAttributes(self.dpy(), event.button.subwindow, &mut attr);
 
-				*resize_window = Some((event.button.subwindow, (attr.x, attr.y)));
+				self.mut_state.borrow_mut().resize_window =
+					Some((event.button.subwindow, (attr.x, attr.y)));
 
 				xlib::XWarpPointer(
 					self.dpy(),
@@ -1006,12 +1071,20 @@ impl WMState {
 					attr.height + attr.border_width - 1,
 				);
 			};
+
+			self.mut_state
+				.borrow_mut()
+				.clients
+				.entry(unsafe { event.button.subwindow })
+				.and_modify(|c| c.borrow_mut().floating = true);
+
+			self.arrange_clients();
 		} else if unsafe {
 			resize_window.is_some()
 				&& event.get_type() == xlib::ButtonRelease
 				&& event.button.button == 3
 		} {
-			*resize_window = None;
+			self.mut_state.borrow_mut().resize_window = None;
 		} else if resize_window.is_some() && event.get_type() == xlib::MotionNotify {
 			let resize_window = resize_window.unwrap();
 

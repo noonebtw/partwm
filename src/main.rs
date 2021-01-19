@@ -1,4 +1,5 @@
 use std::io::Result;
+use log::info;
 
 mod wm;
 
@@ -26,7 +27,8 @@ unsafe extern "C" fn xlib_error_handler(
 
 
 fn main() -> Result<()> {
-    println!("Hello, world!");
+	simple_logger::SimpleLogger::new().init().unwrap();
+	info!("Hello, World!");
 
 	wm::WMState::init().run();
 

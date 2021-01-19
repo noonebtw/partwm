@@ -10,3 +10,4 @@ edition = "2018"
 nix = "0.19.1"
 x11 = {version = "2.18.2", features = ["xlib"] }
 log = "0.4.13"
+simple_logger = "1.11.0"
