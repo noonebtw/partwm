@@ -128,6 +128,52 @@ impl PartialEq for Client {
 
 impl Eq for Client {}
 
+use std::hash::{BuildHasherDefault, Hasher};
+
+#[derive(Debug, Clone, Copy, Default)]
+struct IdentityHasher(usize);
+
+impl Hasher for IdentityHasher {
+	fn finish(&self) -> u64 {
+		self.0 as u64
+	}
+
+	fn write(&mut self, _bytes: &[u8]) {
+		unimplemented!("IdentityHasher only supports usize keys")
+	}
+
+	fn write_u64(&mut self, i: u64) {
+		self.0 = i as usize;
+	}
+
+	fn write_usize(&mut self, i: usize) {
+		self.0 = i;
+	}
+}
+
+type BuildIdentityHasher = BuildHasherDefault<IdentityHasher>;
+
+#[derive(Clone, Debug)]
+struct VirtualScreen {
+	master_stack: HashMap<Window, Weak<RefCell<Client>>, BuildIdentityHasher>,
+	aux_stack: HashMap<Window, Weak<RefCell<Client>>, BuildIdentityHasher>,
+	focused_client: Weak<RefCell<Client>>,
+}
+
+impl VirtualScreen {
+	fn new() -> Self {
+		Self {
+			master_stack: HashMap::default(),
+			aux_stack: HashMap::default(),
+			focused_client: Weak::new(),
+		}
+	}
+
+	fn contains_window(&self, window: &Window) -> bool {
+		self.master_stack.contains_key(window) || self.aux_stack.contains_key(window)
+	}
+}
+
 pub struct XLibState {
 	display: Display,
 	root: Window,
@@ -306,7 +352,8 @@ pub struct WMStateMut {
 	resize_window: Option<(u64, (i32, i32))>,
 	clients: HashMap<Window, Rc<RefCell<Client>>>,
 	focused_client: Weak<RefCell<Client>>,
-	master_stack: Vec<Weak<RefCell<Client>>>,
+	current_vscreen: usize,
+	virtual_screens: Vec<VirtualScreen>,
 }
 
 impl Default for WMStateMut {
@@ -316,7 +363,119 @@ impl Default for WMStateMut {
 			resize_window: None,
 			clients: HashMap::new(),
 			focused_client: Weak::new(),
-			master_stack: vec![],
+			current_vscreen: 0,
+			virtual_screens: vec![VirtualScreen::new()],
+		}
+	}
+}
+
+impl WMStateMut {
+	fn stack_unstacked_clients(&mut self) {
+		info!("[stack_unstacked_clients] ");
+		let current_vscreen = self.current_vscreen;
+
+		self.clients
+			.iter()
+			.filter(|(w, c)| {
+				!c.borrow().floating && self.virtual_screens.iter().any(|vs| !vs.contains_window(w))
+			})
+			.map(|(w, c)| (w.clone(), Rc::downgrade(c)))
+			.collect::<Vec<(u64, Weak<RefCell<Client>>)>>()
+			.iter()
+			.for_each(|(w, c)| {
+				info!(
+					"[stack_unstacked_clients] inserting Window({:?}) into aux_stack",
+					w
+				);
+
+				self.virtual_screens[current_vscreen]
+					.aux_stack
+					.insert(w.clone(), c.clone());
+			});
+	}
+
+	fn is_client_stacked(&self, window: &Window) -> bool {
+		self.virtual_screens
+			.iter()
+			.any(|vs| vs.contains_window(window))
+	}
+
+	fn client_for_window(&self, window: &Window) -> Option<Rc<RefCell<Client>>> {
+		self.clients
+			.iter()
+			.filter(|&(w, _)| *w == *window)
+			.next()
+			.map(|(_, c)| c.clone())
+	}
+
+	fn switch_stack_for_client(&mut self, window: &Window) {
+		if let Some(client) = self.client_for_window(window) {
+			info!("[switch_stack_for_client] client: {:#?}", client.borrow());
+			client.borrow_mut().floating = false;
+
+			if self.virtual_screens[self.current_vscreen]
+				.master_stack
+				.contains_key(window)
+			{
+				self.virtual_screens[self.current_vscreen]
+					.master_stack
+					.remove(window);
+				self.virtual_screens[self.current_vscreen]
+					.aux_stack
+					.insert(*window, Rc::downgrade(&client));
+				info!("[switch_stack_for_client] moved to aux stack");
+			} else {
+				self.virtual_screens[self.current_vscreen]
+					.aux_stack
+					.remove(window);
+				self.virtual_screens[self.current_vscreen]
+					.master_stack
+					.insert(*window, Rc::downgrade(&client));
+				info!("[switch_stack_for_client] moved to master stack");
+			}
+		}
+	}
+
+	fn refresh_screen(&mut self) {
+		let current_vscreen = self.current_vscreen;
+
+		self.virtual_screens
+			.get_mut(current_vscreen)
+			.and_then(|vs| {
+				vs.master_stack.retain(|_, c| {
+					c.upgrade().is_some() && !c.upgrade().unwrap().borrow().floating
+				});
+				vs.aux_stack.retain(|_, c| {
+					c.upgrade().is_some() && !c.upgrade().unwrap().borrow().floating
+				});
+
+				Some(())
+			});
+
+		self.stack_unstacked_clients();
+
+		if self.virtual_screens[current_vscreen]
+			.master_stack
+			.is_empty()
+		{
+			info!("[refresh_screen] master stack was empty, pushing first client if exists:");
+
+			self.virtual_screens[current_vscreen]
+				.aux_stack
+				.iter()
+				.filter(|(_, c)| !c.upgrade().unwrap().borrow().floating)
+				.next()
+				.map(|(w, c)| (w.clone(), c.clone()))
+				.and_then(|(w, c)| {
+					info!("[arrange_clients] Window({:#?})", w);
+
+					self.virtual_screens[current_vscreen]
+						.master_stack
+						.insert(w, c);
+					self.virtual_screens[current_vscreen]
+						.aux_stack
+						.remove(&w)
+				});
 		}
 	}
 }
@@ -365,39 +524,7 @@ impl WMState {
 				println!("spawning terminal");
 				let _ = state.spawn("xterm", &[]);
 			})
-			.add_key_handler("M", Mod1Mask, |state, event| {
-				Some(state.mut_state.borrow_mut()).and_then(|mut mstate| {
-					(mstate
-						.clients
-						.iter()
-						.filter(|&(_, c)| c.borrow().window == unsafe { event.button.subwindow })
-						.next()
-						.and_then(|(_, c)| Some(c.clone())))
-					.and_then(|c| {
-						c.borrow_mut().floating = false;
-
-						let weak_c = Rc::downgrade(&c);
-
-						if mstate
-							.master_stack
-							.iter()
-							.filter(|w| w.ptr_eq(&weak_c))
-							.count() == 0
-						{
-							mstate.master_stack.push(Rc::downgrade(&c));
-						} else {
-							mstate.master_stack.retain(|w| !w.ptr_eq(&weak_c));
-						}
-
-						Some(())
-					})
-				});
-
-				state.arrange_clients();
-			})
-			.add_key_handler("L", Mod1Mask, |state, _| {
-				println!("{:#?}", state.mut_state.borrow());
-			})
+			.add_key_handler("M", Mod1Mask, Self::handle_switch_stack)
 			.add_key_handler("Q", Mod1Mask, |state, event| unsafe {
 				if event.key.subwindow != 0 {
 					if state.xlib_state.atoms.delete.is_none()
@@ -710,18 +837,19 @@ impl WMState {
 	}
 
 	fn focus_client(&self, client: Rc<RefCell<Client>>) {
-		let _ = self.mut_state.try_borrow_mut().and_then(|m| {
-			let mut focused_client = RefMut::map(m, |m| &mut m.focused_client);
-			match focused_client.upgrade() {
-				Some(c) => {
-					self.unfocus_client(c.clone());
-				}
-				_ => {}
-			}
+		Some(self.mut_state.borrow_mut()).and_then(|mut state| {
+			let current_vscreen = state.current_vscreen;
 
-			*focused_client = Rc::downgrade(&client);
+			state
+				.focused_client
+				.upgrade()
+				.and_then(|c| Some(self.unfocus_client(c)));
 
-			Ok(())
+			state.focused_client = Rc::downgrade(&client);
+
+			state.virtual_screens[current_vscreen].focused_client = state.focused_client.clone();
+
+			Some(())
 		});
 
 		unsafe {
@@ -749,9 +877,6 @@ impl WMState {
 	}
 
 	fn arrange_clients(&self) {
-		info!("[arrange_clients] refreshing stack");
-		self.refresh_stack();
-
 		let (screen_w, screen_h) = unsafe {
 			(
 				xlib::XDisplayWidth(self.dpy(), self.xlib_state.screen()),
@@ -760,48 +885,35 @@ impl WMState {
 		};
 
 		Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-			// no need to arrange any clients if there is no clients
 			if !state.clients.is_empty() {
-				// if master stack is empty, populate with first entry in clients list
-				if state.master_stack.is_empty() {
-					info!(
-						"[arrange_clients] master stack was empty, pushing first client if exists:"
-					);
-					let _ = state
-						.clients
-						.iter()
-						.filter(|(_, c)| !c.borrow().floating)
-						.next()
-						.map(|(_, c)| Rc::downgrade(c))
-						.and_then(|w| {
-							info!("[arrange_clients] {:#?}", w);
-							Some(state.master_stack.push(w))
-						});
-				}
+				info!("[arrange_clients] refreshing screen");
+				state.refresh_screen();
+				info!("[arrange_clients] refreshing screen");
 
 				let window_w = {
-					// if clients and master_stack are the same length there is no windows in the aux
-					// stack, in the future might have to change this to filter for
-					// transient/floating windows
-					let has_aux_stack = state
-						.clients
-						.iter()
-						.filter(|&(_, c)| !c.borrow().floating)
-						.count() != state.master_stack.len();
-
-					if has_aux_stack {
-						screen_w / 2
-					} else {
+					if state.virtual_screens[state.current_vscreen]
+						.aux_stack
+						.is_empty()
+					{
 						screen_w
+					} else {
+						screen_w / 2
 					}
 				};
 
-				for (i, weak_client) in state.master_stack.iter().enumerate() {
+				for (i, (_, weak_client)) in state.virtual_screens[state.current_vscreen]
+					.master_stack
+					.iter()
+					.enumerate()
+				{
 					let client = weak_client.upgrade().unwrap();
 
 					let mut wc = {
 						let mut client = client.borrow_mut();
-						let window_h = screen_h / state.master_stack.len() as i32;
+						let window_h = screen_h
+							/ state.virtual_screens[state.current_vscreen]
+								.master_stack
+								.len() as i32;
 
 						client.size = (window_w, window_h);
 						client.position = (0, window_h * i as i32);
@@ -831,28 +943,17 @@ impl WMState {
 					}
 				}
 
-				let (aux_windows, aux_window_count) = {
-					let filter = state.clients.iter().filter(|&(_, c)| {
-						state
-							.master_stack
-							.iter()
-							.filter(|w| w.upgrade().unwrap() == *c)
-							.count() == 0 && !c.borrow().floating
-					});
+				for (i, (_, weak_client)) in state.virtual_screens[state.current_vscreen]
+					.aux_stack
+					.iter()
+					.enumerate()
+				{
+					let client = weak_client.upgrade().unwrap();
 
-					(filter.clone(), filter.count())
-				};
-
-				info!(
-					"[arrange_clients] {} client(s) in aux stack",
-					aux_window_count
-				);
-
-				// filter only windows that arent inthe master stack, essentially aux stack
-				for (i, (_, client)) in aux_windows.enumerate() {
 					let mut wc = {
 						let mut client = client.borrow_mut();
-						let window_h = screen_h / aux_window_count as i32;
+						let window_h = screen_h
+							/ state.virtual_screens[state.current_vscreen].aux_stack.len() as i32;
 
 						client.size = (window_w, window_h);
 						client.position = (window_w, window_h * i as i32);
@@ -882,16 +983,6 @@ impl WMState {
 					}
 				}
 			}
-
-			Some(())
-		});
-	}
-
-	fn refresh_stack(&self) {
-		Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-			state
-				.master_stack
-				.retain(|c| c.upgrade().filter(|c| !c.borrow().floating).is_some());
 
 			Some(())
 		});
@@ -927,6 +1018,14 @@ impl WMState {
 				&mut event as *mut _ as *mut XEvent,
 			);
 		}
+	}
+
+	fn handle_switch_stack(&self, event: &XEvent) {
+		self.mut_state
+			.borrow_mut()
+			.switch_stack_for_client(unsafe { &event.button.subwindow });
+
+		self.arrange_clients();
 	}
 
 	fn handle_toggle_floating(&self, event: &XEvent) {
