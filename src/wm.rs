@@ -377,7 +377,8 @@ impl WMStateMut {
 		self.clients
 			.iter()
 			.filter(|(w, c)| {
-				!c.borrow().floating && self.virtual_screens.iter().any(|vs| !vs.contains_window(w))
+				!c.borrow().floating
+					&& !self.is_client_stacked(w)
 			})
 			.map(|(w, c)| (w.clone(), Rc::downgrade(c)))
 			.collect::<Vec<(u64, Weak<RefCell<Client>>)>>()
@@ -472,9 +473,7 @@ impl WMStateMut {
 					self.virtual_screens[current_vscreen]
 						.master_stack
 						.insert(w, c);
-					self.virtual_screens[current_vscreen]
-						.aux_stack
-						.remove(&w)
+					self.virtual_screens[current_vscreen].aux_stack.remove(&w)
 				});
 		}
 	}
@@ -523,6 +522,12 @@ impl WMState {
 			.add_key_handler("T", Mod1Mask, |state, _| {
 				println!("spawning terminal");
 				let _ = state.spawn("xterm", &[]);
+			})
+			.add_key_handler("Left", Mod1Mask, |state, _| {
+				state.handle_change_virtual_screen(-1);
+			})
+			.add_key_handler("Right", Mod1Mask, |state, _| {
+				state.handle_change_virtual_screen(1);
 			})
 			.add_key_handler("M", Mod1Mask, Self::handle_switch_stack)
 			.add_key_handler("Q", Mod1Mask, |state, event| unsafe {
@@ -888,7 +893,6 @@ impl WMState {
 			if !state.clients.is_empty() {
 				info!("[arrange_clients] refreshing screen");
 				state.refresh_screen();
-				info!("[arrange_clients] refreshing screen");
 
 				let window_w = {
 					if state.virtual_screens[state.current_vscreen]
@@ -1018,6 +1022,53 @@ impl WMState {
 				&mut event as *mut _ as *mut XEvent,
 			);
 		}
+	}
+
+	fn handle_change_virtual_screen(&self, direction: i32) {
+		assert!(direction == 1 || direction == -1);
+
+		Some(self.mut_state.borrow_mut()).and_then(|mut state| {
+
+			// hide all windows from current virtual screen
+			state.virtual_screens[state.current_vscreen]
+				.master_stack
+				.iter()
+				.chain(
+					state.virtual_screens[state.current_vscreen]
+						.aux_stack
+						.iter(),
+				)
+				.for_each(|(_, c)| {
+					if let Some(c) = c.upgrade() {
+						let c = c.borrow();
+						unsafe {
+							xlib::XMoveWindow(self.dpy(), c.window, c.size.0 * -2, c.position.1);
+						}
+					}
+				});
+
+			// change current_vscreen variable
+			let mut new_vscreen = state.current_vscreen as isize + direction as isize;
+
+			if new_vscreen >= state.virtual_screens.len() as isize {
+				state.virtual_screens.push(VirtualScreen::new());
+			} else if new_vscreen < 0 {
+				new_vscreen = state.virtual_screens.len() as isize - 1;
+			}
+
+			state.current_vscreen = new_vscreen as usize;
+
+			Some(())
+		});
+
+		self.arrange_clients();
+		// focus the focused cliend of the new virtual screen
+		let client = self.mut_state.borrow().virtual_screens
+			[self.mut_state.borrow().current_vscreen]
+			.focused_client
+			.to_owned();
+
+		client.upgrade().and_then(|c| Some(self.focus_client(c)));
 	}
 
 	fn handle_switch_stack(&self, event: &XEvent) {
