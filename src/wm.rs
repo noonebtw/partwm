@@ -1,6 +1,6 @@
 // asdf
 use std::{
-	cell::{RefCell, RefMut},
+	cell::RefCell,
 	collections::{hash_map::Entry, HashMap},
 	ffi::CString,
 	io::{Error, ErrorKind, Result},
