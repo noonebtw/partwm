@@ -1,9 +1,12 @@
+/*
 use std::{
+    borrow::Borrow,
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::HashSet,
     ffi::CString,
     hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
+    ops::Deref,
     ptr::{null, null_mut},
     rc::{Rc, Weak},
 };
@@ -70,48 +73,6 @@ impl WMAtoms {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Client {
-    window: Window,
-    floating: bool,
-    size: (i32, i32),
-    position: (i32, i32),
-}
-
-impl Default for Client {
-    fn default() -> Self {
-        Self {
-            window: 0,
-            floating: false,
-            size: (0, 0),
-            position: (0, 0),
-        }
-    }
-}
-
-impl Hash for Client {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.window.hash(state);
-    }
-}
-
-impl Client {
-    pub fn new(window: xlib::Window) -> Self {
-        Self {
-            window,
-            ..Default::default()
-        }
-    }
-}
-
-impl PartialEq for Client {
-    fn eq(&self, other: &Self) -> bool {
-        self.window == other.window
-    }
-}
-
-impl Eq for Client {}
-
 use crate::util::BuildIdentityHasher;
 use weak_table::WeakHashSet;
 
@@ -132,7 +93,7 @@ impl VirtualScreen {
     }
 
     fn contains_client(&self, client: &Rc<Client>) -> bool {
-        self.master_stack.contains(client) || self.aux_stack.contains(client)
+        self.master_stack.contains(client.as_ref()) || self.aux_stack.contains(client.as_ref())
     }
 }
 
@@ -299,125 +260,6 @@ impl XLibState {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct WMStateMut {
-    //move_window:
-    // u64 : window to move
-    // (i32, i32) : initial cursor position
-    // (i32, i32) : initial window position
-    move_window: Option<(u64, (i32, i32), (i32, i32))>,
-    //resize_window:
-    // u64 : window to move
-    // (i32, i32) : initial window position
-    resize_window: Option<(u64, (i32, i32))>,
-    clients: HashSet<Rc<Client>, BuildIdentityHasher>,
-    focused_client: Weak<Client>,
-    current_vscreen: usize,
-    virtual_screens: Vec<VirtualScreen>,
-}
-
-impl Default for WMStateMut {
-    fn default() -> Self {
-        Self {
-            move_window: None,
-            resize_window: None,
-            clients: Default::default(),
-            focused_client: Weak::new(),
-            current_vscreen: 0,
-            virtual_screens: vec![VirtualScreen::new()],
-        }
-    }
-}
-
-impl WMStateMut {
-    fn stack_unstacked_clients(&mut self) {
-        info!("[stack_unstacked_clients] ");
-
-        self.clients
-            .iter()
-            .filter(|&c| !c.floating && self.is_client_stacked(c))
-            .for_each(|c| {
-                info!(
-                    "[stack_unstacked_clients] inserting Client({:?}) into aux_stack",
-                    c
-                );
-
-                self.virtual_screens[self.current_vscreen]
-                    .aux_stack
-                    .insert(c.clone());
-            });
-    }
-
-    fn is_client_stacked(&self, client: &Rc<Client>) -> bool {
-        self.virtual_screens
-            .iter()
-            .any(|vs| vs.contains_client(client))
-    }
-
-    fn client_for_window(&self, window: &Window) -> Option<Rc<Client>> {
-        self.clients
-            .iter()
-            .filter(|&c| c.window == *window)
-            .next()
-            .map(|c| c.clone())
-    }
-
-    fn switch_stack_for_client(&mut self, window: &Window) {
-        if let Some(client) = self.client_for_window(window) {
-            info!("[switch_stack_for_client] client: {:#?}", client);
-
-            if self.virtual_screens[self.current_vscreen]
-                .master_stack
-                .contains(&client)
-            {
-                self.virtual_screens[self.current_vscreen]
-                    .master_stack
-                    .remove(&client);
-                self.virtual_screens[self.current_vscreen]
-                    .aux_stack
-                    .insert(client.clone());
-                info!("[switch_stack_for_client] moved to aux stack");
-            } else {
-                self.virtual_screens[self.current_vscreen]
-                    .aux_stack
-                    .remove(&client);
-                self.virtual_screens[self.current_vscreen]
-                    .master_stack
-                    .insert(client.clone());
-                info!("[switch_stack_for_client] moved to master stack");
-            }
-
-            self.clients.replace(Rc::new(Client {
-                floating: false,
-                ..*client
-            }));
-        }
-    }
-
-    fn refresh_screen(&mut self) {
-        let current_vscreen = self.current_vscreen;
-
-        self.stack_unstacked_clients();
-
-        if let Some(vs) = self.virtual_screens.get_mut(self.current_vscreen) {
-            vs.master_stack.retain(|c| !c.floating);
-            vs.aux_stack.retain(|c| !c.floating);
-
-            if vs.master_stack.is_empty() {
-                info!("[refresh_screen] master stack was empty, pushing first client if exists:");
-                vs.aux_stack.iter().filter(|c| !c.floating).next().map(|c| {
-                    info!("[arrange_clients] Client({:#?})", c);
-
-                    self.virtual_screens[current_vscreen]
-                        .master_stack
-                        .insert(c.clone());
-                    self.virtual_screens[current_vscreen].aux_stack.remove(&c);
-                });
-            }
-        }
-    }
-}
-
 struct Key {
     keycode: i32,
     mod_mask: u32,
@@ -436,21 +278,41 @@ enum KeyOrButton {
 
 pub struct WMState {
     xlib_state: XLibState,
-    key_handlers: Vec<(i32, u32, Rc<dyn Fn(&Self, &XEvent)>)>,
+    key_handlers: Vec<(i32, u32, Rc<dyn Fn(&mut Self, &XEvent)>)>,
     // (button, mod_mask, button_mask)
     buttons: Vec<(u32, u32, i64)>,
-    event_handlers: Vec<Rc<dyn Fn(&Self, &XEvent)>>,
-    mut_state: RefCell<WMStateMut>,
+    event_handlers: Vec<Rc<dyn Fn(&mut Self, &XEvent)>>,
+
+    // MutState:
+
+    //move_window:
+    // u64 : window to move
+    // (i32, i32) : initial cursor position
+    // (i32, i32) : initial window position
+    move_window: Option<(u64, (i32, i32), (i32, i32))>,
+    //resize_window:
+    // u64 : window to move
+    // (i32, i32) : initial window position
+    resize_window: Option<(u64, (i32, i32))>,
+    clients: HashSet<Rc<Client>, BuildIdentityHasher>,
+    focused_client: Weak<Client>,
+    current_vscreen: usize,
+    virtual_screens: Vec<VirtualScreen>,
 }
 
 impl WMState {
     pub fn new() -> Self {
         Self {
             xlib_state: XLibState::new(),
-            mut_state: RefCell::new(WMStateMut::default()),
             key_handlers: vec![],
             event_handlers: vec![],
             buttons: vec![],
+            move_window: None,
+            resize_window: None,
+            clients: Default::default(),
+            focused_client: Weak::new(),
+            current_vscreen: 0,
+            virtual_screens: vec![VirtualScreen::new()],
         }
     }
 
@@ -520,7 +382,103 @@ impl WMState {
         state
     }
 
-    pub fn run(self) -> Self {
+    // MutState Functions:
+
+    fn stack_unstacked_clients(&mut self) {
+        info!("[stack_unstacked_clients] ");
+
+        let unstacked_clients = self
+            .clients
+            .iter()
+            .filter(|&c| !c.floating && !self.is_client_stacked(c))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        unstacked_clients.iter().for_each(|c| {
+            info!(
+                "[stack_unstacked_clients] inserting Client({:?}) into aux_stack",
+                c
+            );
+
+            self.virtual_screens[self.current_vscreen]
+                .aux_stack
+                .insert(c.clone());
+        });
+    }
+
+    fn is_client_stacked(&self, client: &Rc<Client>) -> bool {
+        self.virtual_screens
+            .iter()
+            .any(|vs| vs.contains_client(client))
+    }
+
+    fn client_for_window(&self, window: Window) -> Option<Rc<Client>> {
+        self.clients
+            .iter()
+            .filter(|&c| c.window == window)
+            .next()
+            .cloned()
+    }
+
+    fn switch_stack_for_client(&mut self, client: Rc<Client>) {
+        info!("[switch_stack_for_client] client: {:#?}", client);
+
+        if self.virtual_screens[self.current_vscreen]
+            .master_stack
+            .contains(client.as_ref())
+        {
+            self.virtual_screens[self.current_vscreen]
+                .master_stack
+                .remove(client.as_ref());
+            self.virtual_screens[self.current_vscreen]
+                .aux_stack
+                .insert(client.clone());
+            info!("[switch_stack_for_client] moved to aux stack");
+        } else {
+            self.virtual_screens[self.current_vscreen]
+                .aux_stack
+                .remove(client.as_ref());
+            self.virtual_screens[self.current_vscreen]
+                .master_stack
+                .insert(client.clone());
+            info!("[switch_stack_for_client] moved to master stack");
+        }
+
+        self.clients.replace(Client::new_rc(InnerClient {
+            floating: false,
+            ..**client.as_ref()
+        }));
+    }
+
+    fn refresh_screen(&mut self) {
+        let current_vscreen = self.current_vscreen;
+
+        self.stack_unstacked_clients();
+
+        if let Some(vs) = self.virtual_screens.get_mut(self.current_vscreen) {
+            vs.master_stack.retain(|c| !c.0.borrow().floating);
+            vs.aux_stack.retain(|c| !c.floating);
+
+            if vs.master_stack.is_empty() {
+                info!("[refresh_screen] master stack was empty, pushing first client if exists:");
+                vs.aux_stack.iter().filter(|c| !c.floating).next().map(|c| {
+                    info!("[arrange_clients] Client({:#?})", c);
+
+                    self.virtual_screens[current_vscreen]
+                        .master_stack
+                        .insert(c.clone());
+                    self.virtual_screens[current_vscreen]
+                        .aux_stack
+                        .remove(c.as_ref());
+                });
+            }
+        }
+    }
+
+    pub fn run(mut self) -> Self {
+        let event_handlers = self.event_handlers.clone();
+        let key_handlers = self.key_handlers.clone();
+
         loop {
             let event = unsafe {
                 let mut event: xlib::XEvent = std::mem::MaybeUninit::zeroed().assume_init();
@@ -529,9 +487,9 @@ impl WMState {
                 event
             };
 
-            self.event_handlers.iter().for_each(|handler| {
-                handler(&self, &event);
-            });
+            for handler in event_handlers.iter() {
+                handler(&mut self, &event);
+            }
 
             match event.get_type() {
                 xlib::MapRequest => {
@@ -555,12 +513,12 @@ impl WMState {
                 xlib::KeyPress => {
                     let clean_mask = self.xlib_state.clean_mask();
 
-                    self.key_handlers.iter().for_each(|(key, mask, handler)| {
+                    key_handlers.iter().for_each(|(key, mask, handler)| {
                         if unsafe {
                             event.key.keycode == *key as u32
                                 && event.key.state & clean_mask == *mask & clean_mask
                         } {
-                            handler(&self, &event);
+                            handler(&mut self, &event);
                         }
                     })
                 }
@@ -588,7 +546,7 @@ impl WMState {
     #[allow(dead_code)]
     pub fn add_event_handler<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&Self, &XEvent) + 'static,
+        F: Fn(&mut Self, &XEvent) + 'static,
     {
         self.event_handlers.push(Rc::new(handler));
 
@@ -598,7 +556,7 @@ impl WMState {
     pub fn add_key_handler<S, F>(mut self, key: S, mask: u32, handler: F) -> Self
     where
         S: Into<String>,
-        F: Fn(&Self, &XEvent) + 'static,
+        F: Fn(&mut Self, &XEvent) + 'static,
     {
         let keycode = self.xlib_state.keycode(key);
 
@@ -608,97 +566,74 @@ impl WMState {
         self
     }
 
-    fn map_request(&self, event: &xlib::XMapRequestEvent) {
+    fn map_request(&mut self, event: &xlib::XMapRequestEvent) {
         info!("[MapRequest] event: {:#?}", event);
 
-        let _ = Some(self.mut_state.borrow_mut())
-            .and_then(|mut state| {
-                if state.client_for_window(&event.window).is_none() {
-                    info!("[MapRequest] new client: {:#?}", event.window);
-                    let client = Rc::new(Client::new(event.window));
-                    state.clients.insert(client.clone());
+        if self.client_for_window(event.window).is_none() {
+            info!("[MapRequest] new client: {:#?}", event.window);
+            let client = Rc::new(Client::new(event.window));
+            self.clients.insert(client.clone());
 
-                    Some(client)
-                } else {
-                    None
-                }
-            })
-            .and_then(|c| {
-                unsafe {
-                    xlib::XMapWindow(self.dpy(), c.window);
+            unsafe {
+                xlib::XMapWindow(self.dpy(), client.window);
 
-                    xlib::XSelectInput(
-                        self.dpy(),
-                        event.window,
-                        EnterWindowMask
-                            | FocusChangeMask
-                            | PropertyChangeMask
-                            | StructureNotifyMask,
-                    );
-                }
+                xlib::XSelectInput(
+                    self.dpy(),
+                    event.window,
+                    EnterWindowMask | FocusChangeMask | PropertyChangeMask | StructureNotifyMask,
+                );
+            }
 
-                self.buttons
-                    .iter()
-                    .for_each(|&(button, mod_mask, button_mask)| {
-                        self.xlib_state
-                            .grab_button(c.window, button, mod_mask, button_mask);
-                    });
+            self.buttons
+                .iter()
+                .for_each(|&(button, mod_mask, button_mask)| {
+                    self.xlib_state
+                        .grab_button(client.window, button, mod_mask, button_mask);
+                });
 
-                self.arrange_clients();
-                self.focus_client(c.clone());
-
-                Some(())
-            });
+            self.arrange_clients();
+            self.focus_client(&client);
+        }
     }
 
-    fn unmap_notify(&self, event: &xlib::XUnmapEvent) {
+    fn unmap_notify(&mut self, event: &xlib::XUnmapEvent) {
         info!("[UnmapNotify] event: {:#?}", event);
 
         if event.send_event == 0 {
-            let _ = Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-                if state.client_for_window(&event.window).is_none() {
-                    let client = state.clients.remove(&event.window);
-                    info!("[UnmapNotify] removing client: {:#?}", client);
-                }
-
-                Some(())
-            });
+            if let Some(client) = self.client_for_window(event.window) {
+                self.clients.remove(&client);
+                info!("[UnmapNotify] removing client: {:#?}", client);
+            }
         }
 
         self.arrange_clients();
     }
 
-    fn destroy_notify(&self, event: &xlib::XDestroyWindowEvent) {
+    fn destroy_notify(&mut self, event: &xlib::XDestroyWindowEvent) {
         info!("[DestroyNotify] event: {:?}", event);
 
-        let _ = Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-            let _entry = state.clients.remove(&event.window);
+        if let Some(client) = self.client_for_window(event.window) {
+            self.clients.remove(&client);
 
-            info!("[DestroyNotify] removed entry: {:?}", _entry);
-
-            Some(())
-        });
+            info!("[DestroyNotify] removed entry: {:?}", client);
+        }
 
         self.arrange_clients();
     }
 
-    fn configure_request(&self, event: &xlib::XConfigureRequestEvent) {
+    fn configure_request(&mut self, event: &xlib::XConfigureRequestEvent) {
         info!("[ConfigureRequest] event: {:?}", event);
 
-        match self.mut_state.borrow_mut().clients.entry(event.window) {
-            Entry::Occupied(entry) => {
-                info!(
-                    "[ConfigureRequest] found Client for Window({:?}): {:#?}",
-                    event.window,
-                    entry.get()
-                );
+        match self.client_for_window(event.window) {
+            Some(client) => {
+                info!("[ConfigureRequest] found Client {:#?}", client,);
 
-                self.configure_client(entry.get().clone());
+                self.configure_client(&client);
             }
             _ => {
                 info!(
-					"[ConfigureRequest] no client found for Window({:?}), calling XConfigureWindow()",
-					event.window);
+                              "[ConfigureRequest] no client found for Window({:?}), calling XConfigureWindow()",
+                              event.window);
 
                 let mut wc = xlib::XWindowChanges {
                     x: event.x,
@@ -722,61 +657,36 @@ impl WMState {
         }
     }
 
-    fn enter_notify(&self, event: &xlib::XCrossingEvent) {
+    fn enter_notify(&mut self, event: &xlib::XCrossingEvent) {
         info!("[EnterNotify] event: {:?}", event);
 
-        Some(self.mut_state.borrow())
-            .and_then(|state| {
-                state
-                    .clients
-                    .get(&event.window)
-                    .and_then(|c| Some(c.clone()))
-            })
-            .and_then(|c| {
-                info!(
-                    "[EnterNotify] focusing Client for Window({:?})",
-                    event.window
-                );
-                self.focus_client(c);
-
-                Some(())
-            });
+        if let Some(client) = self.client_for_window(event.window) {
+            info!("[EnterNotify] focusing Client ({:?})", client);
+            self.focus_client(&client);
+        }
     }
 
-    fn button_press(&self, event: &xlib::XButtonEvent) {
+    fn button_press(&mut self, event: &xlib::XButtonEvent) {
         info!("[ButtonPress] event: {:?}", event);
 
-        Some(self.mut_state.borrow())
-            .and_then(|state| {
-                state
-                    .clients
-                    .get(&event.subwindow)
-                    .and_then(|c| Some(c.clone()))
-            })
-            .and_then(|c| {
-                info!(
-                    "[ButtonPress] focusing Client for Window({:?})",
-                    event.window
-                );
+        if let Some(client) = self.client_for_window(event.subwindow) {
+            info!("[ButtonPress] focusing Client ({:?})", client);
+            self.focus_client(&client);
 
-                self.focus_client(c.clone());
+            info!("[ButtonPress] raising Window({:?})", event.window);
 
-                info!("[ButtonPress] raising Window({:?})", event.window);
-
-                unsafe {
-                    xlib::XRaiseWindow(self.dpy(), c.borrow().window);
-                    xlib::XSync(self.dpy(), 0);
-                }
-
-                Some(())
-            });
+            unsafe {
+                xlib::XRaiseWindow(self.dpy(), client.window);
+                xlib::XSync(self.dpy(), 0);
+            }
+        }
     }
 
-    fn unfocus_client(&self, client: Rc<RefCell<Client>>) {
+    fn unfocus_client(&self, client: &Rc<Client>) {
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
-                client.borrow().window,
+                client.window,
                 xlib::RevertToPointerRoot,
                 xlib::CurrentTime,
             );
@@ -785,26 +695,19 @@ impl WMState {
         }
     }
 
-    fn focus_client(&self, client: Rc<Client>) {
-        Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-            let current_vscreen = state.current_vscreen;
+    fn focus_client(&mut self, client: &Rc<Client>) {
+        if let Some(focused_client) = self.focused_client.upgrade() {
+            self.unfocus_client(&focused_client);
+        }
 
-            state
-                .focused_client
-                .upgrade()
-                .and_then(|c| Some(self.unfocus_client(c)));
+        self.focused_client = Rc::downgrade(client);
 
-            state.focused_client = Rc::downgrade(&client);
-
-            state.virtual_screens[current_vscreen].focused_client = state.focused_client.clone();
-
-            Some(())
-        });
+        self.virtual_screens[self.current_vscreen].focused_client = self.focused_client.clone();
 
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
-                client.borrow().window,
+                client.window,
                 xlib::RevertToPointerRoot,
                 xlib::CurrentTime,
             );
@@ -816,13 +719,13 @@ impl WMState {
                 xlib::XA_WINDOW,
                 32,
                 xlib::PropModeReplace,
-                &client.borrow().window as *const u64 as *const _,
+                &client.window as *const u64 as *const _,
                 1,
             );
         }
 
         self.xlib_state
-            .send_event(client.borrow().window, self.xlib_state.atoms.take_focus);
+            .send_event(client.window, self.xlib_state.atoms.take_focus);
     }
 
     fn arrange_clients(&self) {
@@ -833,113 +736,79 @@ impl WMState {
             )
         };
 
-        Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-            if !state.clients.is_empty() {
-                info!("[arrange_clients] refreshing screen");
-                state.refresh_screen();
+        if !self.clients.is_empty() {
+            info!("[arrange_clients] refreshing screen");
+            self.refresh_screen();
 
-                let window_w = {
-                    if state.virtual_screens[state.current_vscreen]
-                        .aux_stack
-                        .is_empty()
-                    {
-                        screen_w
-                    } else {
-                        screen_w / 2
-                    }
-                };
-
-                for (i, (_, weak_client)) in state.virtual_screens[state.current_vscreen]
-                    .master_stack
-                    .iter()
-                    .enumerate()
-                {
-                    let client = weak_client.upgrade().unwrap();
-
-                    let mut wc = {
-                        let mut client = client.borrow_mut();
-                        let window_h = screen_h
-                            / state.virtual_screens[state.current_vscreen]
-                                .master_stack
-                                .len() as i32;
-
-                        client.size = (window_w, window_h);
-                        client.position = (0, window_h * i as i32);
-
-                        xlib::XWindowChanges {
-                            x: client.position.0,
-                            y: client.position.1,
-                            width: client.size.0,
-                            height: client.size.1,
-                            border_width: 0,
-                            sibling: 0,
-                            stack_mode: 0,
-                        }
-                    };
-
-                    unsafe {
-                        xlib::XConfigureWindow(
-                            self.dpy(),
-                            client.borrow().window,
-                            (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
-                            &mut wc,
-                        );
-
-                        self.configure_client(client.clone());
-
-                        xlib::XSync(self.dpy(), 0);
-                    }
-                }
-
-                for (i, (_, weak_client)) in state.virtual_screens[state.current_vscreen]
+            let window_w = {
+                if self.virtual_screens[self.current_vscreen]
                     .aux_stack
-                    .iter()
-                    .enumerate()
+                    .is_empty()
                 {
-                    let client = weak_client.upgrade().unwrap();
-
-                    let mut wc = {
-                        let mut client = client.borrow_mut();
-                        let window_h = screen_h
-                            / state.virtual_screens[state.current_vscreen].aux_stack.len() as i32;
-
-                        client.size = (window_w, window_h);
-                        client.position = (window_w, window_h * i as i32);
-
-                        xlib::XWindowChanges {
-                            x: client.position.0,
-                            y: client.position.1,
-                            width: client.size.0,
-                            height: client.size.1,
-                            border_width: 0,
-                            sibling: 0,
-                            stack_mode: 0,
-                        }
-                    };
-
-                    unsafe {
-                        xlib::XConfigureWindow(
-                            self.dpy(),
-                            client.borrow().window,
-                            (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
-                            &mut wc,
-                        );
-
-                        self.configure_client(client.clone());
-
-                        xlib::XSync(self.dpy(), 0);
-                    }
+                    screen_w
+                } else {
+                    screen_w / 2
                 }
-            }
+            };
 
-            Some(())
-        });
+            if let Some(vc) = self.virtual_screens.get_mut(self.current_vscreen) {
+                vc.master_stack
+                    .iter()
+                    .zip(std::iter::repeat(vc.master_stack.len()))
+                    .enumerate()
+                    .chain(
+                        vc.aux_stack
+                            .iter()
+                            .zip(std::iter::repeat(vc.aux_stack.len()))
+                            .enumerate(),
+                    )
+                    .for_each(|(i, (client, length))| {
+                        let (mut wc, size, position) = {
+                            let window_h = screen_h / length as i32;
+
+                            let size = (window_w, window_h);
+                            let position = (0, window_h * i as i32);
+
+                            (
+                                xlib::XWindowChanges {
+                                    x: position.0,
+                                    y: position.1,
+                                    width: size.0,
+                                    height: size.1,
+                                    border_width: 0,
+                                    sibling: 0,
+                                    stack_mode: 0,
+                                },
+                                size,
+                                position,
+                            )
+                        };
+
+                        unsafe {
+                            xlib::XConfigureWindow(
+                                self.dpy(),
+                                client.window,
+                                (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
+                                &mut wc,
+                            );
+
+                            self.clients.replace(Client::new_rc(InnerClient {
+                                size,
+                                position,
+                                ..**client
+                            }));
+
+                            self.configure_client(&client);
+
+                            xlib::XSync(self.dpy(), 0);
+                        }
+                    });
+            }
+        }
     }
 
-    fn configure_client(&self, client: Rc<RefCell<Client>>) {
+    fn configure_client(&self, client: &Rc<Client>) {
         let mut event = {
-            let client = client.borrow();
-
             xlib::XConfigureEvent {
                 type_: xlib::ConfigureNotify,
                 display: self.dpy(),
@@ -968,61 +837,49 @@ impl WMState {
         }
     }
 
-    fn handle_change_virtual_screen(&self, direction: i32) {
+    fn handle_change_virtual_screen(&mut self, direction: i32) {
         assert!(direction == 1 || direction == -1);
 
-        Some(self.mut_state.borrow_mut()).and_then(|mut state| {
-            // hide all windows from current virtual screen
-            state.virtual_screens[state.current_vscreen]
-                .master_stack
-                .iter()
-                .chain(
-                    state.virtual_screens[state.current_vscreen]
-                        .aux_stack
-                        .iter(),
-                )
-                .for_each(|(_, c)| {
-                    if let Some(c) = c.upgrade() {
-                        let c = c.borrow();
-                        unsafe {
-                            xlib::XMoveWindow(self.dpy(), c.window, c.size.0 * -2, c.position.1);
-                        }
-                    }
-                });
+        // hide all windows from current virtual screen
+        self.virtual_screens[self.current_vscreen]
+            .master_stack
+            .iter()
+            .chain(self.virtual_screens[self.current_vscreen].aux_stack.iter())
+            .for_each(|c| unsafe {
+                xlib::XMoveWindow(self.dpy(), c.window, c.size.0 * -2, c.position.1);
+            });
 
-            // change current_vscreen variable
-            let mut new_vscreen = state.current_vscreen as isize + direction as isize;
+        // change current_vscreen variable
+        let mut new_vscreen = self.current_vscreen as isize + direction as isize;
 
-            if new_vscreen >= state.virtual_screens.len() as isize {
-                state.virtual_screens.push(VirtualScreen::new());
-            } else if new_vscreen < 0 {
-                new_vscreen = state.virtual_screens.len() as isize - 1;
-            }
+        if new_vscreen >= self.virtual_screens.len() as isize {
+            self.virtual_screens.push(VirtualScreen::new());
+        } else if new_vscreen < 0 {
+            new_vscreen = self.virtual_screens.len() as isize - 1;
+        }
 
-            state.current_vscreen = new_vscreen as usize;
-
-            Some(())
-        });
+        self.current_vscreen = new_vscreen as usize;
 
         self.arrange_clients();
+
         // focus the focused cliend of the new virtual screen
-        let client = self.mut_state.borrow().virtual_screens
-            [self.mut_state.borrow().current_vscreen]
+        if let Some(client) = self.virtual_screens[self.current_vscreen]
             .focused_client
-            .to_owned();
-
-        client.upgrade().and_then(|c| Some(self.focus_client(c)));
+            .upgrade()
+        {
+            self.focus_client(&client);
+        }
     }
 
-    fn handle_switch_stack(&self, event: &XEvent) {
-        self.mut_state
-            .borrow_mut()
-            .switch_stack_for_client(unsafe { &event.button.subwindow });
+    fn handle_switch_stack(&mut self, event: &XEvent) {
+        if let Some(client) = self.client_for_window(event.button.subwindow) {
+            self.switch_stack_for_client(client);
+        }
 
         self.arrange_clients();
     }
 
-    fn handle_toggle_floating(&self, event: &XEvent) {
+    fn handle_toggle_floating(&mut self, event: &XEvent) {
         if event.get_type() == xlib::ButtonPress {
             let event = unsafe { event.button };
             let clean_mask = self.xlib_state.clean_mask();
@@ -1031,31 +888,28 @@ impl WMState {
                 && event.state & clean_mask == Mod1Mask & clean_mask
                 && event.subwindow != 0
             {
-                self.mut_state
-                    .borrow_mut()
-                    .clients
-                    .entry(event.subwindow)
-                    .and_modify(|c| {
-                        let mut c = c.borrow_mut();
-                        info!(
-                            "[handle_toggle_floating] {:#?} floating -> {:?}",
-                            c, !c.floating
-                        );
-                        c.floating = !c.floating;
-                    });
+                if let Some(client) = self.client_for_window(event.subwindow) {
+                    info!(
+                        "[handle_toggle_floating] {:#?} floating -> {:?}",
+                        client, !client.floating
+                    );
+
+                    self.clients.replace(Client::new_rc(InnerClient {
+                        floating: !client.floating,
+                        ..**client
+                    }));
+                }
 
                 self.arrange_clients();
             }
         }
     }
 
-    fn handle_move_window(&self, event: &XEvent) {
+    fn handle_move_window(&mut self, event: &XEvent) {
         let clean_mask = self.xlib_state.clean_mask();
 
-        let move_window = self.mut_state.borrow_mut().move_window;
-
         if unsafe {
-            move_window.is_none()
+            self.move_window.is_none()
                 && event.get_type() == xlib::ButtonPress
                 && event.button.button == 1
                 && event.button.state & clean_mask == Mod1Mask & clean_mask
@@ -1069,7 +923,7 @@ impl WMState {
                 (attr.x, attr.y)
             };
 
-            self.mut_state.borrow_mut().move_window = Some(unsafe {
+            self.move_window = Some(unsafe {
                 (
                     event.button.subwindow,
                     (event.button.x, event.button.y),
@@ -1077,21 +931,22 @@ impl WMState {
                 )
             });
 
-            self.mut_state
-                .borrow_mut()
-                .clients
-                .entry(unsafe { event.button.subwindow })
-                .and_modify(|c| c.borrow_mut().floating = true);
+            if let Some(client) = self.client_for_window(event.button.subwindow) {
+                self.clients.replace(Client::new_rc(InnerClient {
+                    floating: true,
+                    ..**client
+                }));
+            }
 
             self.arrange_clients();
         } else if unsafe {
-            move_window.is_some()
+            self.move_window.is_some()
                 && event.get_type() == xlib::ButtonRelease
                 && event.button.button == 1
         } {
-            self.mut_state.borrow_mut().move_window = None;
-        } else if move_window.is_some() && event.get_type() == xlib::MotionNotify {
-            let move_window = move_window.unwrap();
+            self.move_window = None;
+        } else if self.move_window.is_some() && event.get_type() == xlib::MotionNotify {
+            let move_window = self.move_window.unwrap();
 
             let attr = unsafe {
                 let mut attr: xlib::XWindowAttributes =
@@ -1131,10 +986,10 @@ impl WMState {
         }
     }
 
-    fn handle_resize_window(&self, event: &XEvent) {
+    fn handle_resize_window(&mut self, event: &XEvent) {
         let clean_mask = self.xlib_state.clean_mask();
 
-        let resize_window = self.mut_state.borrow().resize_window;
+        let resize_window = self.resize_window;
 
         if unsafe {
             resize_window.is_none()
@@ -1149,8 +1004,7 @@ impl WMState {
 
                 xlib::XGetWindowAttributes(self.dpy(), event.button.subwindow, &mut attr);
 
-                self.mut_state.borrow_mut().resize_window =
-                    Some((event.button.subwindow, (attr.x, attr.y)));
+                self.resize_window = Some((event.button.subwindow, (attr.x, attr.y)));
 
                 xlib::XWarpPointer(
                     self.dpy(),
@@ -1165,11 +1019,12 @@ impl WMState {
                 );
             };
 
-            self.mut_state
-                .borrow_mut()
-                .clients
-                .entry(unsafe { event.button.subwindow })
-                .and_modify(|c| c.borrow_mut().floating = true);
+            if let Some(client) = self.client_for_window(unsafe { event.button.subwindow }) {
+                self.clients.replace(Client::new_rc(InnerClient {
+                    floating: true,
+                    ..**client
+                }));
+            }
 
             self.arrange_clients();
         } else if unsafe {
@@ -1177,7 +1032,7 @@ impl WMState {
                 && event.get_type() == xlib::ButtonRelease
                 && event.button.button == 3
         } {
-            self.mut_state.borrow_mut().resize_window = None;
+            self.resize_window = None;
         } else if resize_window.is_some() && event.get_type() == xlib::MotionNotify {
             let resize_window = resize_window.unwrap();
 
@@ -1261,3 +1116,4 @@ impl WMState {
         }
     }
 }
+*/

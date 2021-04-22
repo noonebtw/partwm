@@ -2,6 +2,7 @@ use log::info;
 use std::io::Result;
 
 //mod state;
+mod clients;
 mod util;
 mod wm;
 
@@ -31,7 +32,7 @@ fn main() -> Result<()> {
     simple_logger::SimpleLogger::new().init().unwrap();
     info!("Hello, World!");
 
-    wm::WMState::init().run();
+    //wm::WMState::init().run();
 
     Ok(())
 }
