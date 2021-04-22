@@ -1,6 +1,8 @@
-use std::io::Result;
 use log::info;
+use std::io::Result;
 
+//mod state;
+mod util;
 mod wm;
 
 #[allow(dead_code)]
@@ -25,12 +27,11 @@ unsafe extern "C" fn xlib_error_handler(
     }
 }
 
-
 fn main() -> Result<()> {
-	simple_logger::SimpleLogger::new().init().unwrap();
-	info!("Hello, World!");
+    simple_logger::SimpleLogger::new().init().unwrap();
+    info!("Hello, World!");
 
-	wm::WMState::init().run();
+    wm::WMState::init().run();
 
     Ok(())
 }
