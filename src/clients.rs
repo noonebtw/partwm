@@ -1,88 +1,105 @@
-use std::{borrow::Borrow, cell::RefCell, collections::HashMap, rc::Rc};
-use std::{
-    hash::{Hash, Hasher},
-    num::NonZeroI32,
-};
+#![allow(dead_code)]
 
-use x11::xlib::Window;
+use std::collections::HashMap;
+use std::num::NonZeroI32;
 
 use crate::util::BuildIdentityHasher;
 
-#[derive(Clone, Debug)]
-struct Client {
-    window: Window,
-    floating: bool,
-    size: (i32, i32),
-    position: (i32, i32),
-}
+mod client {
+    use std::hash::{Hash, Hasher};
 
-impl Hash for Client {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.window.hash(state);
+    use x11::xlib::Window;
+
+    #[derive(Clone, Debug)]
+    pub struct Client {
+        pub(super) window: Window,
+        pub(super) floating: bool,
+        pub(super) size: (i32, i32),
+        pub(super) position: (i32, i32),
     }
-}
 
-impl PartialEq for Client {
-    fn eq(&self, other: &Self) -> bool {
-        self.window == other.window
+    impl Client {
+        pub fn new(window: Window, floating: bool, size: (i32, i32), position: (i32, i32)) -> Self {
+            Self {
+                window,
+                floating,
+                size,
+                position,
+            }
+        }
     }
-}
 
-impl Eq for Client {}
+    impl Hash for Client {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.window.hash(state);
+        }
+    }
 
-impl Borrow<Window> for Client {
+    impl PartialEq for Client {
+        fn eq(&self, other: &Self) -> bool {
+            self.window == other.window
+        }
+    }
+
+    impl Eq for Client {}
+
+    pub trait ClientKey {
+        fn key(&self) -> u64;
+    }
+
+    impl<'a> PartialEq for (dyn ClientKey + 'a) {
+        fn eq(&self, other: &Self) -> bool {
+            self.key() == other.key()
+        }
+    }
+
+    impl<'a> Eq for (dyn ClientKey + 'a) {}
+
+    impl<'a> Hash for (dyn ClientKey + 'a) {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.key().hash(state);
+        }
+    }
+
+    impl ClientKey for Client {
+        fn key(&self) -> u64 {
+            self.window
+        }
+    }
+
+    impl ClientKey for Window {
+        fn key(&self) -> u64 {
+            self.to_owned()
+        }
+    }
+
+    /*
+    impl Borrow<Window> for Client {
     fn borrow(&self) -> &Window {
-        &self.window
+    &self.window
     }
-}
-
-trait ClientKey {
-    fn key(&self) -> u64;
-}
-
-impl<'a> PartialEq for (dyn ClientKey + 'a) {
-    fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
     }
-}
 
-impl<'a> Eq for (dyn ClientKey + 'a) {}
-
-impl<'a> Hash for (dyn ClientKey + 'a) {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.key().hash(state);
-    }
-}
-
-impl ClientKey for Client {
+    impl ClientKey for Rc<Client> {
     fn key(&self) -> u64 {
-        self.window
+    self.window
     }
-}
-
-impl ClientKey for Rc<Client> {
-    fn key(&self) -> u64 {
-        self.window
     }
-}
-
-impl ClientKey for Window {
-    fn key(&self) -> u64 {
-        self.to_owned()
-    }
-}
-
-impl<'a> Borrow<dyn ClientKey + 'a> for Client {
+    impl<'a> Borrow<dyn ClientKey + 'a> for Client {
     fn borrow(&self) -> &(dyn ClientKey + 'a) {
         self
     }
-}
+    }
 
-impl<'a> Borrow<dyn ClientKey + 'a> for Rc<Client> {
+    impl<'a> Borrow<dyn ClientKey + 'a> for Rc<Client> {
     fn borrow(&self) -> &(dyn ClientKey + 'a) {
         self
     }
+    }
+    */
 }
+
+use client::*;
 
 #[cfg(test)]
 mod tests {
@@ -106,19 +123,17 @@ mod tests {
             floating: false,
         });
 
-        clients.refresh_virtual_screen();
-        clients.arange_virtual_screen(600, 400);
+        clients.arange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
 
         clients.remove(&1u64);
 
-        clients.refresh_virtual_screen();
-        clients.arange_virtual_screen(600, 400);
+        clients.arange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
 
-        clients.virtual_screens.rotate_right(1);
+        clients.rotate_right();
 
         clients.insert(Client {
             window: 3,
@@ -127,18 +142,15 @@ mod tests {
             floating: false,
         });
 
-        clients.refresh_virtual_screen();
-        clients.arange_virtual_screen(600, 400);
+        clients.arange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
 
         clients.toggle_floating(&2u64);
 
-        clients.virtual_screens.rotate_left(1);
+        clients.rotate_left();
 
-        clients.stack_unstacked();
-        clients.refresh_virtual_screen();
-        clients.arange_virtual_screen(600, 400);
+        clients.arange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
     }
@@ -146,12 +158,23 @@ mod tests {
 
 use std::{collections::VecDeque, iter::repeat};
 
-type Clients = HashMap<Window, Client, BuildIdentityHasher>;
+type Clients = HashMap<u64, Client, BuildIdentityHasher>;
 type ClientRef = u64;
 type ClientRefs = Vec<ClientRef>;
 
+#[derive(Debug)]
+/// Used to wrap a `&` or `&mut` to a Client type.
+pub enum ClientEntry<T> {
+    /// Entry of a tiled client in the `ClientList`
+    Tiled(T),
+    /// Entry of a floating client in the `ClientList`
+    Floating(T),
+    /// `None` variant equivalent
+    Vacant,
+}
+
 #[derive(Debug, Clone)]
-struct ClientState {
+pub struct ClientState {
     clients: Clients,
     floating_clients: Clients,
     virtual_screens: VecDeque<VirtualScreen>,
@@ -167,7 +190,7 @@ struct VirtualScreen {
 impl Default for ClientState {
     fn default() -> Self {
         let mut vss = VecDeque::<VirtualScreen>::new();
-        vss.resize_with(10, Default::default);
+        vss.resize_with(1, Default::default);
 
         Self {
             clients: Default::default(),
@@ -178,11 +201,11 @@ impl Default for ClientState {
 }
 
 impl ClientState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    fn with_virtualscreens(num: usize) -> Self {
+    pub fn with_virtualscreens(num: usize) -> Self {
         let mut vss = VecDeque::<VirtualScreen>::new();
         vss.resize_with(num, Default::default);
 
@@ -192,7 +215,7 @@ impl ClientState {
         }
     }
 
-    fn insert(&mut self, client: Client) {
+    pub fn insert(&mut self, client: Client) {
         let key = client.key();
 
         self.clients.insert(key, client);
@@ -202,7 +225,7 @@ impl ClientState {
         }
     }
 
-    fn remove<K>(&mut self, key: &K)
+    pub fn remove<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
@@ -212,26 +235,41 @@ impl ClientState {
         self.floating_clients.remove(&key.key());
     }
 
-    fn get<K>(&self, key: &K) -> Option<&Client>
+    pub fn get<K>(&self, key: &K) -> ClientEntry<&Client>
     where
         K: ClientKey,
     {
-        self.clients
-            .get(&key.key())
-            .or_else(|| self.floating_clients.get(&key.key()))
+        match self.clients.get(&key.key()) {
+            Some(client) => ClientEntry::Tiled(client),
+            None => match self.floating_clients.get(&key.key()) {
+                Some(client) => ClientEntry::Floating(client),
+                None => ClientEntry::Vacant,
+            },
+        }
     }
 
-    fn get_mut<K>(&mut self, key: &K) -> Option<&mut Client>
+    pub fn get_mut<K>(&mut self, key: &K) -> ClientEntry<&mut Client>
     where
         K: ClientKey,
     {
         match self.clients.get_mut(&key.key()) {
-            Some(client) => Some(client),
-            None => self.floating_clients.get_mut(&key.key()),
+            Some(client) => ClientEntry::Tiled(client),
+            None => match self.floating_clients.get_mut(&key.key()) {
+                Some(client) => ClientEntry::Floating(client),
+                None => ClientEntry::Vacant,
+            },
         }
     }
 
-    fn toggle_floating<K>(&mut self, key: &K)
+    pub fn rotate_right(&mut self) {
+        self.virtual_screens.rotate_right(1);
+    }
+
+    pub fn rotate_left(&mut self) {
+        self.virtual_screens.rotate_left(1);
+    }
+
+    pub fn toggle_floating<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
@@ -288,7 +326,7 @@ impl ClientState {
     }
 
     /// focuses client `key` on current virtual screen
-    fn focus_client<K>(&mut self, key: &K)
+    pub fn focus_client<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
@@ -299,9 +337,10 @@ impl ClientState {
     }
 
     /**
-    This shouldnt be ever needed to be called since any client added is automatically added
-    to the first `VirtualScreen`
-    */
+    This shouldn't be ever needed to be called since any client added is automatically added
+    to the first `VirtualScreen`.
+     */
+    #[deprecated]
     fn stack_unstacked(&mut self) {
         let unstacked = self
             .clients
@@ -315,7 +354,7 @@ impl ClientState {
         }
     }
 
-    fn switch_stack_for_client<K>(&mut self, key: &K)
+    pub fn switch_stack_for_client<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
@@ -332,9 +371,12 @@ impl ClientState {
         }
     }
 
+    /**
+    there should be no need to call this function since a `VirtualScreen` refreshes it self on
+    client removal.
+    */
+    #[deprecated]
     fn refresh_virtual_screen(&mut self) {
-        let clients = &self.clients;
-
         if let Some(vs) = self.virtual_screens.front_mut() {
             vs.refresh();
         }
@@ -342,9 +384,10 @@ impl ClientState {
 
     /**
     resizes and moves clients on the current virtual screen with `width` and `height` as
-    screen width and screen height
+    screen width and screen height.
+    Optionally adds a gap between windows `gap.unwrap_or(0)` pixels wide.
     */
-    fn arange_virtual_screen(&mut self, width: i32, height: i32, gap: Option<i32>) {
+    pub fn arange_virtual_screen(&mut self, width: i32, height: i32, gap: Option<i32>) {
         let gap = gap.unwrap_or(0);
 
         // should be fine to unwrap since we will always have at least 1 virtual screen
@@ -427,6 +470,8 @@ impl VirtualScreen {
                 self.focused = None;
             }
         }
+
+        self.refresh();
     }
 
     /**
