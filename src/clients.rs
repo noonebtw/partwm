@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn client_lists_test() {
-        let mut clients = ClientState::default();
+        let mut clients = ClientState::with_virtualscreens(3);
 
         clients.insert(Client {
             window: 1,
@@ -106,7 +106,6 @@ mod tests {
             floating: false,
         });
 
-        clients.stack_unstacked();
         clients.refresh_virtual_screen();
         clients.arange_virtual_screen(600, 400);
 
@@ -114,7 +113,6 @@ mod tests {
 
         clients.remove(&1u64);
 
-        clients.stack_unstacked();
         clients.refresh_virtual_screen();
         clients.arange_virtual_screen(600, 400);
 
@@ -129,7 +127,6 @@ mod tests {
             floating: false,
         });
 
-        clients.stack_unstacked();
         clients.refresh_virtual_screen();
         clients.arange_virtual_screen(600, 400);
 
@@ -156,6 +153,7 @@ type ClientRefs = Vec<ClientRef>;
 #[derive(Debug, Clone)]
 struct ClientState {
     clients: Clients,
+    floating_clients: Clients,
     virtual_screens: VecDeque<VirtualScreen>,
 }
 
@@ -173,53 +171,95 @@ impl Default for ClientState {
 
         Self {
             clients: Default::default(),
+            floating_clients: Default::default(),
             virtual_screens: vss,
         }
     }
 }
 
 impl ClientState {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn with_virtualscreens(num: usize) -> Self {
+        let mut vss = VecDeque::<VirtualScreen>::new();
+        vss.resize_with(num, Default::default);
+
+        Self {
+            virtual_screens: vss,
+            ..Default::default()
+        }
+    }
+
     fn insert(&mut self, client: Client) {
         let key = client.key();
 
         self.clients.insert(key, client);
+
+        if let Some(vs) = self.virtual_screens.front_mut() {
+            vs.aux.push(key);
+        }
     }
 
     fn remove<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
-        self.virtual_screens
-            .iter_mut()
-            .for_each(|vs| vs.remove(key));
+        self.remove_from_virtual_screens(key);
 
         self.clients.remove(&key.key());
+        self.floating_clients.remove(&key.key());
     }
 
     fn get<K>(&self, key: &K) -> Option<&Client>
     where
         K: ClientKey,
     {
-        self.clients.get(&key.key())
+        self.clients
+            .get(&key.key())
+            .or_else(|| self.floating_clients.get(&key.key()))
     }
 
     fn get_mut<K>(&mut self, key: &K) -> Option<&mut Client>
     where
         K: ClientKey,
     {
-        self.clients.get_mut(&key.key())
+        match self.clients.get_mut(&key.key()) {
+            Some(client) => Some(client),
+            None => self.floating_clients.get_mut(&key.key()),
+        }
     }
 
-    fn toggle_floating<K>(&mut self, key: &K) -> Option<bool>
+    fn toggle_floating<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
-        match self.get_mut(key) {
-            Some(client) => {
-                client.floating = !client.floating;
-                Some(client.floating)
+        let key = key.key();
+        let client = self.clients.remove(&key);
+        let floating_client = self.floating_clients.remove(&key);
+
+        match (client, floating_client) {
+            (Some(client), None) => {
+                self.floating_clients.insert(key, client);
+                self.remove_from_virtual_screens(&key);
             }
-            None => None,
+            (None, Some(client)) => {
+                self.clients.insert(key, client);
+                if let Some(vs) = self.virtual_screens.front_mut() {
+                    vs.aux.push(key);
+                }
+            }
+            _ => {}
+        };
+    }
+
+    fn remove_from_virtual_screens<K>(&mut self, key: &K)
+    where
+        K: ClientKey,
+    {
+        if let Some(vs) = self.get_mut_virtualscreen_for_client(key) {
+            vs.remove(key);
         }
     }
 
@@ -258,18 +298,20 @@ impl ClientState {
         }
     }
 
+    /**
+    This shouldnt be ever needed to be called since any client added is automatically added
+    to the first `VirtualScreen`
+    */
     fn stack_unstacked(&mut self) {
         let unstacked = self
             .clients
             .iter()
-            .filter(|&(key, client)| {
-                !client.floating && self.get_virtualscreen_for_client(key).is_none()
-            })
+            .filter(|&(key, _)| self.get_virtualscreen_for_client(key).is_none())
             .map(|(key, _)| key)
             .collect::<Vec<_>>();
 
         if let Some(vs) = self.virtual_screens.front_mut() {
-            vs.aux.extend(unstacked.into_iter())
+            vs.aux.extend(unstacked.into_iter());
         }
     }
 
@@ -294,19 +336,7 @@ impl ClientState {
         let clients = &self.clients;
 
         if let Some(vs) = self.virtual_screens.front_mut() {
-            vs.master.retain(|key| match clients.get(key) {
-                Some(client) => !client.floating,
-                None => false,
-            });
-            vs.aux.retain(|key| match clients.get(key) {
-                Some(client) => !client.floating,
-                None => false,
-            });
-
-            // if master is empty but aux has at least one client, drain from aux to master
-            if vs.master.is_empty() && !vs.aux.is_empty() {
-                vs.master.extend(vs.aux.drain(..1));
-            }
+            vs.refresh();
         }
     }
 
@@ -314,9 +344,10 @@ impl ClientState {
     resizes and moves clients on the current virtual screen with `width` and `height` as
     screen width and screen height
     */
-    fn arange_virtual_screen(&mut self, width: i32, height: i32) {
-        // should be fine to unwrap since we will always have at least 1 virtual screen
+    fn arange_virtual_screen(&mut self, width: i32, height: i32, gap: Option<i32>) {
+        let gap = gap.unwrap_or(0);
 
+        // should be fine to unwrap since we will always have at least 1 virtual screen
         if let Some(vs) = self.virtual_screens.front_mut() {
             // if aux is empty -> width : width / 2
             let width = width / (1 + i32::from(!vs.aux.is_empty() && !vs.master.is_empty()));
@@ -348,8 +379,8 @@ impl ClientState {
                         .zip(repeat(aux_height).zip(repeat(width))),
                 )
             {
-                let size = (width, height);
-                let position = (x, height * i as i32);
+                let size = (width + gap * 2, height + gap * 2);
+                let position = (x + gap, height * i as i32 + gap);
 
                 if let Some(client) = self.clients.get_mut(key) {
                     *client = Client {
@@ -390,6 +421,22 @@ impl VirtualScreen {
         let key = key.key();
         self.master.retain(|k| *k != key);
         self.aux.retain(|k| *k != key);
+
+        if let Some(k) = self.focused {
+            if k == key {
+                self.focused = None;
+            }
+        }
+    }
+
+    /**
+    if `self.master` is empty but `self.aux` has at least one client, drain from aux to master
+    this ensures that if only 1 `Client` is on this `VirtualScreen` it will be on the master stack
+    */
+    fn refresh(&mut self) {
+        if self.master.is_empty() && !self.aux.is_empty() {
+            self.master.extend(self.aux.drain(..1));
+        }
     }
 
     fn focus<K>(&mut self, key: &K)
