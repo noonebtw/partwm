@@ -12,19 +12,34 @@ mod client {
 
     #[derive(Clone, Debug)]
     pub struct Client {
-        pub(super) window: Window,
-        pub(super) floating: bool,
-        pub(super) size: (i32, i32),
-        pub(super) position: (i32, i32),
+        pub(crate) window: Window,
+        pub(crate) size: (i32, i32),
+        pub(crate) position: (i32, i32),
+    }
+
+    impl Default for Client {
+        fn default() -> Self {
+            Self {
+                window: 0,
+                size: (100, 100),
+                position: (0, 0),
+            }
+        }
     }
 
     impl Client {
-        pub fn new(window: Window, floating: bool, size: (i32, i32), position: (i32, i32)) -> Self {
+        pub fn new(window: Window, size: (i32, i32), position: (i32, i32)) -> Self {
             Self {
                 window,
-                floating,
                 size,
                 position,
+            }
+        }
+
+        pub fn new_default(window: Window) -> Self {
+            Self {
+                window,
+                ..Default::default()
             }
         }
     }
@@ -99,7 +114,7 @@ mod client {
     */
 }
 
-use client::*;
+pub use client::*;
 
 #[cfg(test)]
 mod tests {
@@ -113,23 +128,25 @@ mod tests {
             window: 1,
             size: (1, 1),
             position: (1, 1),
-            floating: false,
         });
 
         clients.insert(Client {
             window: 2,
             size: (1, 1),
             position: (1, 1),
-            floating: false,
         });
 
-        clients.arange_virtual_screen(600, 400, None);
+        clients.arrange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
 
+        clients
+            .iter_current_screen()
+            .for_each(|c| println!("{:?}", c));
+
         clients.remove(&1u64);
 
-        clients.arange_virtual_screen(600, 400, None);
+        clients.arrange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
 
@@ -139,10 +156,9 @@ mod tests {
             window: 3,
             size: (1, 1),
             position: (1, 1),
-            floating: false,
         });
 
-        clients.arange_virtual_screen(600, 400, None);
+        clients.arrange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
 
@@ -150,7 +166,7 @@ mod tests {
 
         clients.rotate_left();
 
-        clients.arange_virtual_screen(600, 400, None);
+        clients.arrange_virtual_screen(600, 400, None);
 
         println!("{:#?}", clients);
     }
@@ -173,18 +189,48 @@ pub enum ClientEntry<T> {
     Vacant,
 }
 
+impl<T> Into<Option<T>> for ClientEntry<T> {
+    fn into(self) -> Option<T> {
+        match self {
+            Self::Vacant => None,
+            Self::Tiled(client) | Self::Floating(client) => Some(client),
+        }
+    }
+}
+
+impl<T> ClientEntry<T> {
+    pub fn into_option(self) -> Option<T> {
+        self.into()
+    }
+
+    pub fn unwrap(self) -> T {
+        self.into_option().unwrap()
+    }
+
+    pub fn is_vacant(&self) -> bool {
+        match self {
+            ClientEntry::Vacant => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_occupied(&self) -> bool {
+        !self.is_vacant()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ClientState {
-    clients: Clients,
-    floating_clients: Clients,
-    virtual_screens: VecDeque<VirtualScreen>,
+    pub(self) clients: Clients,
+    pub(self) floating_clients: Clients,
+    focused: Option<ClientRef>,
+    pub(self) virtual_screens: VecDeque<VirtualScreen>,
 }
 
 #[derive(Debug, Clone)]
 struct VirtualScreen {
     master: ClientRefs,
     aux: ClientRefs,
-    focused: Option<ClientRef>,
 }
 
 impl Default for ClientState {
@@ -195,6 +241,7 @@ impl Default for ClientState {
         Self {
             clients: Default::default(),
             floating_clients: Default::default(),
+            focused: None,
             virtual_screens: vss,
         }
     }
@@ -215,7 +262,7 @@ impl ClientState {
         }
     }
 
-    pub fn insert(&mut self, client: Client) {
+    pub fn insert(&mut self, client: Client) -> Option<&Client> {
         let key = client.key();
 
         self.clients.insert(key, client);
@@ -223,6 +270,10 @@ impl ClientState {
         if let Some(vs) = self.virtual_screens.front_mut() {
             vs.aux.push(key);
         }
+
+        self.focus_client(&key);
+
+        self.clients.get(&key)
     }
 
     pub fn remove<K>(&mut self, key: &K)
@@ -233,6 +284,35 @@ impl ClientState {
 
         self.clients.remove(&key.key());
         self.floating_clients.remove(&key.key());
+    }
+
+    pub fn contains<K>(&self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        let key = key.key();
+
+        self.clients.contains_key(&key) || self.floating_clients.contains_key(&key)
+    }
+
+    pub fn iter_floating(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.floating_clients.iter()
+    }
+
+    pub fn iter_hidden(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.clients
+            .iter()
+            .filter(move |&(k, _)| !self.virtual_screens.front().unwrap().contains(k))
+    }
+
+    pub fn iter_visible(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.iter_floating().chain(self.iter_current_screen())
+    }
+
+    pub fn iter_current_screen(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.clients
+            .iter()
+            .filter(move |&(k, _)| self.virtual_screens.front().unwrap().contains(k))
     }
 
     pub fn get<K>(&self, key: &K) -> ClientEntry<&Client>
@@ -248,16 +328,11 @@ impl ClientState {
         }
     }
 
-    pub fn get_mut<K>(&mut self, key: &K) -> ClientEntry<&mut Client>
-    where
-        K: ClientKey,
-    {
-        match self.clients.get_mut(&key.key()) {
-            Some(client) => ClientEntry::Tiled(client),
-            None => match self.floating_clients.get_mut(&key.key()) {
-                Some(client) => ClientEntry::Floating(client),
-                None => ClientEntry::Vacant,
-            },
+    pub fn get_focused(&self) -> ClientEntry<&Client> {
+        if let Some(focused) = self.focused {
+            self.get(&focused)
+        } else {
+            ClientEntry::Vacant
         }
     }
 
@@ -325,14 +400,56 @@ impl ClientState {
         )
     }
 
-    /// focuses client `key` on current virtual screen
-    pub fn focus_client<K>(&mut self, key: &K)
+    /**
+    focuses client `key` if it contains `key` and returns a reference to the  newly and the previously
+    focused clients if any.
+    */
+    pub fn focus_client<K>(&mut self, key: &K) -> (ClientEntry<&Client>, ClientEntry<&Client>)
     where
         K: ClientKey,
     {
-        match self.virtual_screens.front_mut() {
-            Some(vs) => vs.focus(key),
-            None => {}
+        if self.contains(key) {
+            match self.focused {
+                // focus the new client and return reference to it and the previously focused client.
+                Some(focused) => {
+                    self.focused = Some(key.key());
+                    (self.get(key), self.get(&focused))
+                }
+                /*
+                not currently focusing any client
+                focus the new client and return reference to it.
+                */
+                None => {
+                    self.focused = Some(key.key());
+                    (self.get(key), ClientEntry::Vacant)
+                }
+            }
+        } else {
+            // key is not a reference to a valid client
+            (ClientEntry::Vacant, ClientEntry::Vacant)
+        }
+    }
+
+    /**
+    sets `self.focused` to `None` and returns a reference to the previously focused Client if any.
+    */
+    pub fn unfocus(&mut self) -> ClientEntry<&Client> {
+        match self.focused {
+            Some(focused) => {
+                self.focused = None;
+                self.get(&focused)
+            }
+            None => ClientEntry::Vacant,
+        }
+    }
+
+    pub fn is_focused<K>(&self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        match self.focused {
+            Some(focused) => focused == key.key(),
+            None => false,
         }
     }
 
@@ -387,7 +504,7 @@ impl ClientState {
     screen width and screen height.
     Optionally adds a gap between windows `gap.unwrap_or(0)` pixels wide.
     */
-    pub fn arange_virtual_screen(&mut self, width: i32, height: i32, gap: Option<i32>) {
+    pub fn arrange_virtual_screen(&mut self, width: i32, height: i32, gap: Option<i32>) {
         let gap = gap.unwrap_or(0);
 
         // should be fine to unwrap since we will always have at least 1 virtual screen
@@ -444,7 +561,6 @@ impl Default for VirtualScreen {
         Self {
             master: Default::default(),
             aux: Default::default(),
-            focused: None,
         }
     }
 }
@@ -465,12 +581,6 @@ impl VirtualScreen {
         self.master.retain(|k| *k != key);
         self.aux.retain(|k| *k != key);
 
-        if let Some(k) = self.focused {
-            if k == key {
-                self.focused = None;
-            }
-        }
-
         self.refresh();
     }
 
@@ -482,12 +592,5 @@ impl VirtualScreen {
         if self.master.is_empty() && !self.aux.is_empty() {
             self.master.extend(self.aux.drain(..1));
         }
-    }
-
-    fn focus<K>(&mut self, key: &K)
-    where
-        K: ClientKey,
-    {
-        self.focused = Some(key.key());
     }
 }
