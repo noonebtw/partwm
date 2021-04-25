@@ -11,6 +11,8 @@ use x11::xlib::{
 };
 use xlib::GrabModeAsync;
 
+use log::error;
+
 use crate::clients::Client;
 
 pub struct XLib {
@@ -70,7 +72,7 @@ impl XLib {
         }
     }
 
-    pub fn init(self) -> Self {
+    pub fn init(&mut self) {
         unsafe {
             let mut window_attributes =
                 std::mem::MaybeUninit::<xlib::XSetWindowAttributes>::zeroed().assume_init();
@@ -92,11 +94,17 @@ impl XLib {
             xlib::XSelectInput(self.dpy(), self.root, window_attributes.event_mask);
         }
 
-        self
+        self.grab_global_keybinds(self.root);
     }
 
     pub fn add_global_keybind(&mut self, key: KeyOrButton) {
         self.global_keybinds.push(key);
+    }
+
+    fn grab_global_keybinds(&self, window: Window) {
+        for kb in self.global_keybinds.iter() {
+            self.grab_key_or_button(window, kb);
+        }
     }
 
     #[allow(dead_code)]
@@ -206,18 +214,22 @@ impl XLib {
             stack_mode: 0,
         };
 
-        unsafe {
-            xlib::XConfigureWindow(
-                self.dpy(),
-                client.window,
-                (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
-                &mut windowchanges,
-            );
+        if client.size.0 < 1 || client.size.1 < 1 {
+            error!("client {:?} size is less than 1 pixel!", client);
+        } else {
+            unsafe {
+                xlib::XConfigureWindow(
+                    self.dpy(),
+                    client.window,
+                    (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
+                    &mut windowchanges,
+                );
 
-            // I don't think I have to call this ~
-            //self.configure(client);
+                // I don't think I have to call this ~
+                //self.configure_client(client);
 
-            xlib::XSync(self.dpy(), 0);
+                xlib::XSync(self.dpy(), 0);
+            }
         }
     }
 
@@ -232,15 +244,19 @@ impl XLib {
             stack_mode: 0,
         };
 
-        unsafe {
-            xlib::XConfigureWindow(
-                self.dpy(),
-                client.window,
-                (xlib::CWWidth | xlib::CWHeight) as u32,
-                &mut wc,
-            );
+        if client.size.0 < 1 || client.size.1 < 1 {
+            error!("client {:?} size is less than 1 pixel!", client);
+        } else {
+            unsafe {
+                xlib::XConfigureWindow(
+                    self.dpy(),
+                    client.window,
+                    (xlib::CWX | xlib::CWY) as u32,
+                    &mut wc,
+                );
 
-            xlib::XSync(self.dpy(), 0);
+                xlib::XSync(self.dpy(), 0);
+            }
         }
     }
 
@@ -255,15 +271,19 @@ impl XLib {
             stack_mode: 0,
         };
 
-        unsafe {
-            xlib::XConfigureWindow(
-                self.dpy(),
-                client.window,
-                (xlib::CWX | xlib::CWY) as u32,
-                &mut wc,
-            );
+        if client.size.0 < 1 || client.size.1 < 1 {
+            error!("client {:?} size is less than 1 pixel!", client);
+        } else {
+            unsafe {
+                xlib::XConfigureWindow(
+                    self.dpy(),
+                    client.window,
+                    (xlib::CWWidth | xlib::CWHeight) as u32,
+                    &mut wc,
+                );
 
-            xlib::XSync(self.dpy(), 0);
+                xlib::XSync(self.dpy(), 0);
+            }
         }
     }
 
@@ -278,15 +298,19 @@ impl XLib {
             stack_mode: 0,
         };
 
-        unsafe {
-            xlib::XConfigureWindow(
-                self.dpy(),
-                client.window,
-                (xlib::CWWidth | xlib::CWHeight) as u32,
-                &mut wc,
-            );
+        if client.size.0 < 1 || client.size.1 < 1 {
+            error!("client {:?} size is less than 1 pixel!", client);
+        } else {
+            unsafe {
+                xlib::XConfigureWindow(
+                    self.dpy(),
+                    client.window,
+                    (xlib::CWX | xlib::CWY) as u32,
+                    &mut wc,
+                );
 
-            xlib::XSync(self.dpy(), 0);
+                xlib::XSync(self.dpy(), 0);
+            }
         }
     }
 
@@ -352,9 +376,7 @@ impl XLib {
             );
         }
 
-        for kb in self.global_keybinds.iter() {
-            self.grab_key_or_button(window, kb);
-        }
+        self.grab_global_keybinds(window);
     }
 
     pub fn dimensions(&self) -> (i32, i32) {

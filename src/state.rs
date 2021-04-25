@@ -3,7 +3,10 @@ use std::rc::Rc;
 use log::{error, info};
 
 use x11::xlib::{self, ShiftMask, Window, XButtonEvent, XEvent, XKeyEvent, XMotionEvent};
-use xlib::{ButtonPressMask, ButtonReleaseMask, Mod1Mask, PointerMotionMask};
+use xlib::{
+    ButtonPressMask, ButtonReleaseMask, Mod1Mask, PointerMotionMask, XConfigureRequestEvent,
+    XCrossingEvent, XDestroyWindowEvent, XMapRequestEvent, XUnmapEvent,
+};
 
 use crate::{
     clients::{Client, ClientKey, ClientState},
@@ -19,6 +22,7 @@ pub struct WindowManager {
     xlib: XLib,
 }
 
+#[derive(Debug)]
 pub enum Direction {
     Left,
     Right,
@@ -38,7 +42,7 @@ struct KeyBinding {
 impl WindowManager {
     pub fn new() -> Self {
         let clients = ClientState::with_virtualscreens(3);
-        let xlib = XLib::new().init();
+        let xlib = XLib::new();
 
         Self {
             clients,
@@ -82,7 +86,7 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("T", Mod1Mask | ShiftMask),
+            self.xlib.make_key("T", Mod1Mask),
             |wm, _| wm.spawn("xterm", &[]),
         ));
 
@@ -101,6 +105,8 @@ impl WindowManager {
             |wm, _| wm.rotate_virtual_screen(Direction::Right),
         ));
 
+        self.xlib.init();
+
         self
     }
 
@@ -113,9 +119,9 @@ impl WindowManager {
         loop {
             let event = self.xlib.next_event();
 
+            self.handle_toggle_floating(&event);
             self.handle_move_window(&event);
             self.handle_resize_client(&event);
-            self.handle_toggle_floating(&event);
 
             match event.get_type() {
                 xlib::MapRequest => self.map_request(&event),
@@ -132,6 +138,8 @@ impl WindowManager {
 
     fn quit(&self) -> ! {
         self.xlib.close_dpy();
+
+        info!("Goodbye.");
 
         std::process::exit(0);
     }
@@ -158,11 +166,13 @@ impl WindowManager {
 
     fn handle_toggle_floating(&mut self, event: &XEvent) {
         if event.get_type() == xlib::ButtonPress {
-            let event = unsafe { &event.button };
+            let event: &XButtonEvent = event.as_ref();
             let clean_mask = self.xlib.get_clean_mask();
 
             if event.button == 2 && event.state & clean_mask == Mod1Mask & clean_mask {
                 if self.clients.contains(&event.subwindow) {
+                    info!("toggleing floating for {:?}", event.subwindow);
+
                     self.clients.toggle_floating(&event.subwindow);
 
                     self.arrange_clients();
@@ -190,9 +200,7 @@ impl WindowManager {
                     && self.clients.contains(&event.subwindow)
                 {
                     // if client is tiled, set to floating
-                    if self.clients.get(&event.subwindow).is_tiled() {
-                        self.clients.toggle_floating(&event.subwindow);
-
+                    if self.clients.set_floating(&event.subwindow) {
                         self.arrange_clients();
                     }
 
@@ -215,11 +223,13 @@ impl WindowManager {
             xlib::MotionNotify => {
                 let event: &XMotionEvent = event.as_ref();
 
-                if let Some(move_window) = &self.move_window {
+                if let Some(move_window) = &mut self.move_window {
                     let (x, y) = (
                         event.x - move_window.cached_cursor_position.0,
                         event.y - move_window.cached_cursor_position.1,
                     );
+
+                    move_window.cached_cursor_position = (event.x, event.y);
 
                     if let Some(client) = self.clients.get_mut(&move_window.key).into_option() {
                         let position = &mut client.position;
@@ -281,16 +291,19 @@ impl WindowManager {
             xlib::MotionNotify => {
                 let event: &XMotionEvent = event.as_ref();
 
-                if let Some(resize_window) = &self.resize_window {
+                if let Some(resize_window) = &mut self.resize_window {
                     let (x, y) = (
                         event.x - resize_window.cached_cursor_position.0,
                         event.y - resize_window.cached_cursor_position.1,
                     );
 
+                    resize_window.cached_cursor_position = (event.x, event.y);
+
                     if let Some(client) = self.clients.get_mut(&resize_window.key).into_option() {
                         let size = &mut client.size;
-                        size.0 += x;
-                        size.1 += y;
+
+                        size.0 = std::cmp::max(1, size.0 + x);
+                        size.1 = std::cmp::max(1, size.1 + y);
 
                         self.xlib.resize_client(client);
                     }
@@ -301,18 +314,18 @@ impl WindowManager {
     }
 
     fn rotate_virtual_screen(&mut self, dir: Direction) {
+        info!("rotateing VS: {:?}", dir);
+
         match dir {
             Direction::Left => self.clients.rotate_left(),
             Direction::Right => self.clients.rotate_right(),
         }
 
         self.clients
-            .iter_current_screen()
-            .for_each(|(_, c)| self.xlib.move_resize_client(c));
-
-        self.clients
             .iter_hidden()
             .for_each(|(_, c)| self.xlib.hide_client(c));
+
+        self.arrange_clients();
 
         // focus first client in all visible clients
         let to_focus = self.clients.iter_visible().next().map(|(k, _)| k).cloned();
@@ -324,11 +337,15 @@ impl WindowManager {
 
     fn arrange_clients(&mut self) {
         let (width, height) = self.xlib.dimensions();
-        self.clients.arrange_virtual_screen(width, height, None);
+        self.clients.arrange_virtual_screen(width, height, Some(2));
 
         self.clients
             .iter_current_screen()
             .for_each(|(_, c)| self.xlib.move_resize_client(c));
+
+        self.clients
+            .iter_floating()
+            .for_each(|(_, c)| self.xlib.raise_client(c));
     }
 
     fn focus_client<K>(&mut self, key: &K)
@@ -337,12 +354,12 @@ impl WindowManager {
     {
         let (new, old) = self.clients.focus_client(key);
 
-        if let Some(new) = new.into_option() {
-            self.xlib.focus_client(new);
-        }
-
         if let Some(old) = old.into_option() {
             self.xlib.unfocus_client(old);
+        }
+
+        if let Some(new) = new.into_option() {
+            self.xlib.focus_client(new);
         }
     }
 
@@ -363,20 +380,17 @@ impl WindowManager {
     }
 
     fn map_request(&mut self, event: &XEvent) {
-        let event = unsafe { &event.map_request };
-
-        info!("MapRequest: {:?}", event);
+        let event: &XMapRequestEvent = event.as_ref();
 
         if !self.clients.contains(&event.window) {
-            info!("MapRequest: new client");
+            info!("MapRequest: new client: {:?}", event.window);
 
             self.new_client(event.window);
         }
     }
 
     fn unmap_notify(&mut self, event: &XEvent) {
-        let event = unsafe { &event.unmap };
-        info!("UnmapNotify: {:?}", event);
+        let event: &XUnmapEvent = event.as_ref();
 
         self.clients.remove(&event.window);
 
@@ -384,8 +398,7 @@ impl WindowManager {
     }
 
     fn destroy_notify(&mut self, event: &XEvent) {
-        let event = unsafe { &event.destroy_window };
-        info!("DestroyNotify: {:?}", event);
+        let event: &XDestroyWindowEvent = event.as_ref();
 
         self.clients.remove(&event.window);
 
@@ -393,8 +406,7 @@ impl WindowManager {
     }
 
     fn configure_request(&mut self, event: &XEvent) {
-        let event = unsafe { &event.configure_request };
-        info!("ConfigureRequest: {:?}", event);
+        let event: &XConfigureRequestEvent = event.as_ref();
 
         match self.clients.get(&event.window).into_option() {
             Some(client) => self.xlib.configure_client(client),
@@ -403,15 +415,13 @@ impl WindowManager {
     }
 
     fn enter_notify(&mut self, event: &XEvent) {
-        let event = unsafe { &event.crossing };
-        info!("EnterNotify: {:?}", event);
+        let event: &XCrossingEvent = event.as_ref();
 
         self.focus_client(&event.window);
     }
 
     fn button_notify(&mut self, event: &XEvent) {
-        let event = unsafe { &event.button };
-        info!("EnterNotify: {:?}", event);
+        let event: &XButtonEvent = event.as_ref();
 
         self.focus_client(&event.subwindow);
         if let Some(client) = self.clients.get(&event.subwindow).into_option() {
@@ -420,6 +430,7 @@ impl WindowManager {
     }
 
     pub fn spawn(&self, command: &str, args: &[&str]) {
+        info!("spawn: {:?} {:?}", command, args.join(" "));
         match std::process::Command::new(command).args(args).spawn() {
             Ok(_) => {}
             Err(err) => {

@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::num::NonZeroI32;
 
+use log::{debug, error};
+
 use crate::util::BuildIdentityHasher;
 
 mod client {
@@ -282,7 +284,7 @@ impl ClientState {
         self.clients.insert(key, client);
 
         if let Some(vs) = self.virtual_screens.front_mut() {
-            vs.aux.push(key);
+            vs.insert(&key);
         }
 
         self.focus_client(&key);
@@ -373,13 +375,13 @@ impl ClientState {
 
     /**
     Sets a tiled client to floating and returns true, does nothing for a floating client and
-    returns false.
+    returns false. If this function returns `true` you have to call `arrange_clients` after.
     */
     pub fn set_floating<K>(&mut self, key: &K) -> bool
     where
         K: ClientKey,
     {
-        if self.get(key).is_floating() {
+        if self.get(key).is_tiled() {
             self.toggle_floating(key);
 
             true
@@ -388,6 +390,10 @@ impl ClientState {
         }
     }
 
+    /**
+    This function invalidates the tiling, call `arrange_clients` to fix it again (it doesn't do it
+    automatically since xlib has to move and resize all windows anyways).
+    */
     pub fn toggle_floating<K>(&mut self, key: &K)
     where
         K: ClientKey,
@@ -404,10 +410,12 @@ impl ClientState {
             (None, Some(client)) => {
                 self.clients.insert(key, client);
                 if let Some(vs) = self.virtual_screens.front_mut() {
-                    vs.aux.push(key);
+                    vs.insert(&key);
                 }
             }
-            _ => {}
+            _ => {
+                error!("wtf? Client was present in tiled and floating list.")
+            }
         };
     }
 
@@ -497,38 +505,12 @@ impl ClientState {
         }
     }
 
-    /**
-    This shouldn't be ever needed to be called since any client added is automatically added
-    to the first `VirtualScreen`.
-     */
-    #[deprecated]
-    fn stack_unstacked(&mut self) {
-        let unstacked = self
-            .clients
-            .iter()
-            .filter(|&(key, _)| self.get_virtualscreen_for_client(key).is_none())
-            .map(|(key, _)| key)
-            .collect::<Vec<_>>();
-
-        if let Some(vs) = self.virtual_screens.front_mut() {
-            vs.aux.extend(unstacked.into_iter());
-        }
-    }
-
     pub fn switch_stack_for_client<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
         if let Some(vs) = self.get_mut_virtualscreen_for_client(key) {
-            match vs.master.iter().position(|&key| key == key.key()) {
-                Some(index) => {
-                    vs.aux.extend(vs.master.drain(index..=index));
-                }
-                None => {
-                    let index = vs.aux.iter().position(|&key| key == key.key()).unwrap();
-                    vs.master.extend(vs.aux.drain(index..=index));
-                }
-            }
+            vs.switch_stack_for_client(key);
         }
     }
 
@@ -554,7 +536,7 @@ impl ClientState {
         // should be fine to unwrap since we will always have at least 1 virtual screen
         if let Some(vs) = self.virtual_screens.front_mut() {
             // if aux is empty -> width : width / 2
-            let width = width / (1 + i32::from(!vs.aux.is_empty() && !vs.master.is_empty()));
+            let width = width / (1 + i32::from(!vs.aux.is_empty()));
 
             // make sure we dont devide by 0
             let master_height = height
@@ -583,7 +565,7 @@ impl ClientState {
                         .zip(repeat(aux_height).zip(repeat(width))),
                 )
             {
-                let size = (width + gap * 2, height + gap * 2);
+                let size = (width - gap * 2, height - gap * 2);
                 let position = (x + gap, height * i as i32 + gap);
 
                 if let Some(client) = self.clients.get_mut(key) {
@@ -595,6 +577,8 @@ impl ClientState {
                 }
             }
         }
+
+        debug!("{:#?}", self);
     }
 
     // Should have xlib send those changes back to the x server after this function
@@ -617,6 +601,15 @@ impl VirtualScreen {
         self.master.contains(&key.key()) || self.aux.contains(&key.key())
     }
 
+    fn insert<K>(&mut self, key: &K)
+    where
+        K: ClientKey,
+    {
+        self.aux.push(key.key());
+
+        self.refresh();
+    }
+
     fn remove<K>(&mut self, key: &K)
     where
         K: ClientKey,
@@ -624,6 +617,23 @@ impl VirtualScreen {
         let key = key.key();
         self.master.retain(|k| *k != key);
         self.aux.retain(|k| *k != key);
+
+        self.refresh();
+    }
+
+    fn switch_stack_for_client<K>(&mut self, key: &K)
+    where
+        K: ClientKey,
+    {
+        match self.master.iter().position(|&k| k == key.key()) {
+            Some(index) => {
+                self.aux.extend(self.master.drain(index..=index));
+            }
+            None => {
+                let index = self.aux.iter().position(|&k| k == key.key()).unwrap();
+                self.master.extend(self.aux.drain(index..=index));
+            }
+        }
 
         self.refresh();
     }
