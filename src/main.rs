@@ -4,7 +4,6 @@ use std::io::Result;
 mod clients;
 mod state;
 mod util;
-mod wm;
 mod xlib;
 
 #[allow(dead_code)]
@@ -33,6 +32,5 @@ fn main() -> Result<()> {
     simple_logger::SimpleLogger::new().init().unwrap();
     info!("Hello, World!");
 
-    //wm::WMState::init().run();
-    state::WindowManager::new().run();
+    state::WindowManager::new().init().run();
 }

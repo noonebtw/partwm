@@ -5,8 +5,9 @@ use x11::xlib::{
     self, Atom, ButtonPressMask, CWEventMask, ControlMask, EnterWindowMask, FocusChangeMask,
     LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask,
     PropertyChangeMask, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
-    SubstructureRedirectMask, Window, XConfigureRequestEvent, XDefaultScreen, XEvent, XInternAtom,
-    XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow, XSync,
+    SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen,
+    XEvent, XInternAtom, XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow, XSync,
+    XWarpPointer,
 };
 use xlib::GrabModeAsync;
 
@@ -17,6 +18,7 @@ pub struct XLib {
     root: Window,
     screen: i32,
     atoms: Atoms,
+    global_keybinds: Vec<KeyOrButton>,
 }
 
 struct Atoms {
@@ -26,17 +28,19 @@ struct Atoms {
     take_focus: Atom,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyOrButton {
     Key(i32, u32),
     Button(u32, u32, u64),
 }
 
 impl KeyOrButton {
+    #[allow(dead_code)]
     pub fn key(keycode: i32, modmask: u32) -> Self {
         Self::Key(keycode, modmask)
     }
-    pub fn button(button: u32, modmask: u32, buttonmask: u64) -> Self {
-        Self::Button(button, modmask, buttonmask)
+    pub fn button(button: u32, modmask: u32, buttonmask: i64) -> Self {
+        Self::Button(button, modmask, buttonmask as u64)
     }
 }
 
@@ -59,6 +63,7 @@ impl XLib {
 
         Self {
             atoms: Atoms::init(display.clone()),
+            global_keybinds: Vec::new(),
             root,
             screen,
             display,
@@ -88,6 +93,17 @@ impl XLib {
         }
 
         self
+    }
+
+    pub fn add_global_keybind(&mut self, key: KeyOrButton) {
+        self.global_keybinds.push(key);
+    }
+
+    #[allow(dead_code)]
+    pub fn remove_global_keybind(&mut self, key: &KeyOrButton) {
+        if self.global_keybinds.contains(key) {
+            self.global_keybinds.retain(|kb| kb != key);
+        }
     }
 
     fn dpy(&self) -> *mut xlib::Display {
@@ -335,6 +351,10 @@ impl XLib {
                 EnterWindowMask | FocusChangeMask | PropertyChangeMask | StructureNotifyMask,
             );
         }
+
+        for kb in self.global_keybinds.iter() {
+            self.grab_key_or_button(window, kb);
+        }
     }
 
     pub fn dimensions(&self) -> (i32, i32) {
@@ -343,6 +363,26 @@ impl XLib {
                 xlib::XDisplayWidth(self.dpy(), self.screen),
                 xlib::XDisplayHeight(self.dpy(), self.screen),
             )
+        }
+    }
+
+    pub fn close_dpy(&self) {
+        unsafe {
+            XCloseDisplay(self.dpy());
+        }
+    }
+
+    pub fn kill_client(&self, client: &Client) {
+        if !self.send_event(client, self.atoms.delete_window) {
+            unsafe {
+                XKillClient(self.dpy(), client.window);
+            }
+        }
+    }
+
+    pub fn move_cursor(&self, window: Window, position: (i32, i32)) {
+        unsafe {
+            XWarpPointer(self.dpy(), 0, window, 0, 0, 0, 0, position.0, position.1);
         }
     }
 
@@ -391,6 +431,15 @@ impl XLib {
         }
     }
 
+    pub fn make_key<S>(&self, key: S, modmask: u32) -> KeyOrButton
+    where
+        S: AsRef<str>,
+    {
+        let key = self.keycode(key);
+
+        KeyOrButton::Key(key, modmask)
+    }
+
     fn keycode<S>(&self, string: S) -> i32
     where
         S: AsRef<str>,
@@ -424,7 +473,7 @@ impl XLib {
         0
     }
 
-    fn get_clean_mask(&self) -> u32 {
+    pub fn get_clean_mask(&self) -> u32 {
         !(self.get_numlock_mask() | LockMask)
             & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask)
     }

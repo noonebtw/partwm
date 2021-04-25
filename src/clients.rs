@@ -214,6 +214,20 @@ impl<T> ClientEntry<T> {
         }
     }
 
+    pub fn is_floating(&self) -> bool {
+        match self {
+            ClientEntry::Floating(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_tiled(&self) -> bool {
+        match self {
+            ClientEntry::Tiled(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_occupied(&self) -> bool {
         !self.is_vacant()
     }
@@ -328,6 +342,19 @@ impl ClientState {
         }
     }
 
+    pub fn get_mut<K>(&mut self, key: &K) -> ClientEntry<&mut Client>
+    where
+        K: ClientKey,
+    {
+        match self.clients.get_mut(&key.key()) {
+            Some(client) => ClientEntry::Tiled(client),
+            None => match self.floating_clients.get_mut(&key.key()) {
+                Some(client) => ClientEntry::Floating(client),
+                None => ClientEntry::Vacant,
+            },
+        }
+    }
+
     pub fn get_focused(&self) -> ClientEntry<&Client> {
         if let Some(focused) = self.focused {
             self.get(&focused)
@@ -342,6 +369,23 @@ impl ClientState {
 
     pub fn rotate_left(&mut self) {
         self.virtual_screens.rotate_left(1);
+    }
+
+    /**
+    Sets a tiled client to floating and returns true, does nothing for a floating client and
+    returns false.
+    */
+    pub fn set_floating<K>(&mut self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        if self.get(key).is_floating() {
+            self.toggle_floating(key);
+
+            true
+        } else {
+            false
+        }
     }
 
     pub fn toggle_floating<K>(&mut self, key: &K)

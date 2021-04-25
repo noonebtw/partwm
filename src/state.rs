@@ -1,14 +1,21 @@
-use log::info;
+use std::rc::Rc;
 
-use x11::xlib::{self, Window, XEvent};
+use log::{error, info};
+
+use x11::xlib::{self, ShiftMask, Window, XButtonEvent, XEvent, XKeyEvent, XMotionEvent};
+use xlib::{ButtonPressMask, ButtonReleaseMask, Mod1Mask, PointerMotionMask};
 
 use crate::{
     clients::{Client, ClientKey, ClientState},
+    xlib::KeyOrButton,
     xlib::XLib,
 };
 
 pub struct WindowManager {
     clients: ClientState,
+    move_window: Option<MoveWindow>,
+    resize_window: Option<MoveWindow>,
+    keybinds: Vec<KeyBinding>,
     xlib: XLib,
 }
 
@@ -17,17 +24,98 @@ pub enum Direction {
     Right,
 }
 
+struct MoveWindow {
+    key: Window,
+    cached_cursor_position: (i32, i32),
+}
+
+#[derive(Clone)]
+struct KeyBinding {
+    key: KeyOrButton,
+    closure: Rc<dyn Fn(&mut WindowManager, &XKeyEvent)>,
+}
+
 impl WindowManager {
     pub fn new() -> Self {
         let clients = ClientState::with_virtualscreens(3);
         let xlib = XLib::new().init();
 
-        Self { clients, xlib }
+        Self {
+            clients,
+            move_window: None,
+            resize_window: None,
+            keybinds: Vec::new(),
+            xlib,
+        }
+    }
+
+    pub fn init(mut self) -> Self {
+        self.xlib.add_global_keybind(KeyOrButton::button(
+            1,
+            Mod1Mask,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        ));
+        self.xlib.add_global_keybind(KeyOrButton::button(
+            2,
+            Mod1Mask,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        ));
+        self.xlib.add_global_keybind(KeyOrButton::button(
+            3,
+            Mod1Mask,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("M", Mod1Mask),
+            Self::handle_switch_stack,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Q", Mod1Mask),
+            Self::kill_client,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Q", Mod1Mask | ShiftMask),
+            |wm, _| wm.quit(),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("T", Mod1Mask | ShiftMask),
+            |wm, _| wm.spawn("xterm", &[]),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Return", Mod1Mask | ShiftMask),
+            |wm, _| wm.spawn("xterm", &[]),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Left", Mod1Mask),
+            |wm, _| wm.rotate_virtual_screen(Direction::Left),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Right", Mod1Mask),
+            |wm, _| wm.rotate_virtual_screen(Direction::Right),
+        ));
+
+        self
+    }
+
+    fn add_keybind(&mut self, keybind: KeyBinding) {
+        self.xlib.add_global_keybind(keybind.key);
+        self.keybinds.push(keybind);
     }
 
     pub fn run(mut self) -> ! {
         loop {
             let event = self.xlib.next_event();
+
+            self.handle_move_window(&event);
+            self.handle_resize_client(&event);
+            self.handle_toggle_floating(&event);
 
             match event.get_type() {
                 xlib::MapRequest => self.map_request(&event),
@@ -35,9 +123,180 @@ impl WindowManager {
                 xlib::ConfigureRequest => self.configure_request(&event),
                 xlib::EnterNotify => self.enter_notify(&event),
                 xlib::DestroyNotify => self.destroy_notify(&event),
-                xlib::ButtonPress => self.destroy_notify(&event),
+                xlib::ButtonPress => self.button_notify(&event),
+                xlib::KeyPress => self.handle_keybinds(event.as_ref()),
                 _ => {}
             }
+        }
+    }
+
+    fn quit(&self) -> ! {
+        self.xlib.close_dpy();
+
+        std::process::exit(0);
+    }
+
+    fn kill_client(&mut self, event: &XKeyEvent) {
+        if let Some(client) = self.clients.get(&event.subwindow).into_option() {
+            self.xlib.kill_client(client);
+        }
+    }
+
+    // TODO: change this somehow cuz I'm not a big fan of this "hardcoded" keybind stuff
+    fn handle_keybinds(&mut self, event: &XKeyEvent) {
+        let clean_mask = self.xlib.get_clean_mask();
+        for kb in self.keybinds.clone().into_iter() {
+            if let KeyOrButton::Key(keycode, modmask) = kb.key {
+                if keycode as u32 == event.keycode
+                    && modmask & clean_mask == event.state & clean_mask
+                {
+                    (kb.closure)(self, event);
+                }
+            }
+        }
+    }
+
+    fn handle_toggle_floating(&mut self, event: &XEvent) {
+        if event.get_type() == xlib::ButtonPress {
+            let event = unsafe { &event.button };
+            let clean_mask = self.xlib.get_clean_mask();
+
+            if event.button == 2 && event.state & clean_mask == Mod1Mask & clean_mask {
+                if self.clients.contains(&event.subwindow) {
+                    self.clients.toggle_floating(&event.subwindow);
+
+                    self.arrange_clients();
+                }
+            }
+        }
+    }
+
+    fn handle_switch_stack(&mut self, event: &XKeyEvent) {
+        self.clients.switch_stack_for_client(&event.subwindow);
+
+        self.arrange_clients();
+    }
+
+    fn handle_move_window(&mut self, event: &XEvent) {
+        let clean_mask = self.xlib.get_clean_mask();
+
+        match event.get_type() {
+            xlib::ButtonPress => {
+                let event: &XButtonEvent = event.as_ref();
+
+                if self.move_window.is_none()
+                    && event.button == 1
+                    && event.state & clean_mask == Mod1Mask & clean_mask
+                    && self.clients.contains(&event.subwindow)
+                {
+                    // if client is tiled, set to floating
+                    if self.clients.get(&event.subwindow).is_tiled() {
+                        self.clients.toggle_floating(&event.subwindow);
+
+                        self.arrange_clients();
+                    }
+
+                    self.move_window = Some(MoveWindow {
+                        key: event.subwindow,
+                        cached_cursor_position: (event.x, event.y),
+                    });
+                }
+            }
+
+            // reset on release
+            xlib::ButtonRelease => {
+                let event: &XButtonEvent = event.as_ref();
+
+                if event.button == 1 && self.move_window.is_some() {
+                    self.move_window = None;
+                }
+            }
+
+            xlib::MotionNotify => {
+                let event: &XMotionEvent = event.as_ref();
+
+                if let Some(move_window) = &self.move_window {
+                    let (x, y) = (
+                        event.x - move_window.cached_cursor_position.0,
+                        event.y - move_window.cached_cursor_position.1,
+                    );
+
+                    if let Some(client) = self.clients.get_mut(&move_window.key).into_option() {
+                        let position = &mut client.position;
+                        position.0 += x;
+                        position.1 += y;
+
+                        self.xlib.move_client(client);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_resize_client(&mut self, event: &XEvent) {
+        let clean_mask = self.xlib.get_clean_mask();
+
+        match event.get_type() {
+            xlib::ButtonPress => {
+                let event: &XButtonEvent = event.as_ref();
+
+                if self.resize_window.is_none()
+                    && event.button == 3
+                    && event.state & clean_mask == Mod1Mask & clean_mask
+                    && self.clients.contains(&event.subwindow)
+                {
+                    // if client is tiled, set to floating
+                    if self.clients.set_floating(&event.subwindow) {
+                        self.arrange_clients();
+                    }
+
+                    let client = self.clients.get(&event.subwindow).unwrap();
+
+                    let position = {
+                        (
+                            client.position.0 + client.size.0,
+                            client.position.1 + client.size.1,
+                        )
+                    };
+
+                    self.xlib.move_cursor(client.window, position);
+
+                    self.resize_window = Some(MoveWindow {
+                        key: event.subwindow,
+                        cached_cursor_position: position,
+                    });
+                }
+            }
+
+            // reset on release
+            xlib::ButtonRelease => {
+                let event: &XButtonEvent = event.as_ref();
+
+                if event.button == 3 && self.resize_window.is_some() {
+                    self.resize_window = None;
+                }
+            }
+
+            xlib::MotionNotify => {
+                let event: &XMotionEvent = event.as_ref();
+
+                if let Some(resize_window) = &self.resize_window {
+                    let (x, y) = (
+                        event.x - resize_window.cached_cursor_position.0,
+                        event.y - resize_window.cached_cursor_position.1,
+                    );
+
+                    if let Some(client) = self.clients.get_mut(&resize_window.key).into_option() {
+                        let size = &mut client.size;
+                        size.0 += x;
+                        size.1 += y;
+
+                        self.xlib.resize_client(client);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -87,6 +346,7 @@ impl WindowManager {
         }
     }
 
+    #[allow(dead_code)]
     fn unfocus_client(&mut self) {
         if let Some(client) = self.clients.unfocus().into_option() {
             self.xlib.unfocus_client(client);
@@ -156,6 +416,27 @@ impl WindowManager {
         self.focus_client(&event.subwindow);
         if let Some(client) = self.clients.get(&event.subwindow).into_option() {
             self.xlib.raise_client(client);
+        }
+    }
+
+    pub fn spawn(&self, command: &str, args: &[&str]) {
+        match std::process::Command::new(command).args(args).spawn() {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Failed to spawn {:?}: {:?}", command, err);
+            }
+        }
+    }
+}
+
+impl KeyBinding {
+    fn new<F>(key: KeyOrButton, closure: F) -> Self
+    where
+        F: Fn(&mut WindowManager, &XKeyEvent) + 'static,
+    {
+        Self {
+            key,
+            closure: Rc::new(closure),
         }
     }
 }
