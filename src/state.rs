@@ -87,12 +87,12 @@ impl WindowManager {
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("T", Mod1Mask),
-            |wm, _| wm.spawn("xterm", &[]),
+            |wm, _| wm.spawn("alacritty", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("Return", Mod1Mask | ShiftMask),
-            |wm, _| wm.spawn("xterm", &[]),
+            |wm, _| wm.spawn("alacritty", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
@@ -321,10 +321,6 @@ impl WindowManager {
             Direction::Right => self.clients.rotate_right(),
         }
 
-        self.clients
-            .iter_hidden()
-            .for_each(|(_, c)| self.xlib.hide_client(c));
-
         self.arrange_clients();
 
         // focus first client in all visible clients
@@ -335,12 +331,20 @@ impl WindowManager {
         }
     }
 
+    fn hide_hidden_clients(&self) {
+        self.clients
+            .iter_hidden()
+            .for_each(|(_, c)| self.xlib.hide_client(c));
+    }
+
     fn arrange_clients(&mut self) {
         let (width, height) = self.xlib.dimensions();
         self.clients.arrange_virtual_screen(width, height, Some(2));
 
+        self.hide_hidden_clients();
+
         self.clients
-            .iter_current_screen()
+            .iter_visible()
             .for_each(|(_, c)| self.xlib.move_resize_client(c));
 
         self.clients
@@ -371,7 +375,17 @@ impl WindowManager {
     }
 
     fn new_client(&mut self, window: Window) {
-        self.clients.insert(Client::new_default(window)).unwrap();
+        let client = if let Some(transient_window) = self.xlib.get_transient_for_window(window) {
+            Client::new_transient(
+                window,
+                self.xlib.get_window_size(window).unwrap_or((100, 100)),
+                transient_window,
+            )
+        } else {
+            Client::new_default(window)
+        };
+
+        self.clients.insert(client).unwrap();
         self.xlib.map_window(window);
 
         self.focus_client(&window);

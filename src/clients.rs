@@ -17,6 +17,7 @@ mod client {
         pub(crate) window: Window,
         pub(crate) size: (i32, i32),
         pub(crate) position: (i32, i32),
+        pub(crate) transient_for: Option<Window>,
     }
 
     impl Default for Client {
@@ -25,6 +26,7 @@ mod client {
                 window: 0,
                 size: (100, 100),
                 position: (0, 0),
+                transient_for: None,
             }
         }
     }
@@ -35,6 +37,16 @@ mod client {
                 window,
                 size,
                 position,
+                transient_for: None,
+            }
+        }
+
+        pub fn new_transient(window: Window, size: (i32, i32), transient: Window) -> Self {
+            Self {
+                window,
+                size,
+                transient_for: Some(transient),
+                ..Default::default()
             }
         }
 
@@ -43,6 +55,10 @@ mod client {
                 window,
                 ..Default::default()
             }
+        }
+
+        pub fn is_transient(&self) -> bool {
+            self.transient_for.is_some()
         }
     }
 
@@ -278,18 +294,32 @@ impl ClientState {
         }
     }
 
-    pub fn insert(&mut self, client: Client) -> Option<&Client> {
+    pub fn insert(&mut self, mut client: Client) -> Option<&Client> {
         let key = client.key();
 
-        self.clients.insert(key, client);
+        if client.is_transient() && self.contains(&client.transient_for.unwrap()) {
+            let transient = self.get(&client.transient_for.unwrap()).unwrap();
 
-        if let Some(vs) = self.virtual_screens.front_mut() {
-            vs.insert(&key);
+            client.position = {
+                (
+                    transient.position.0 + (transient.size.0 - client.size.0) / 2,
+                    transient.position.1 + (transient.size.1 - client.size.1) / 2,
+                )
+            };
+
+            self.floating_clients.insert(key, client);
+        } else {
+            self.clients.insert(key, client);
+
+            if let Some(vs) = self.virtual_screens.front_mut() {
+                vs.insert(&key);
+            }
         }
 
         self.focus_client(&key);
 
-        self.clients.get(&key)
+        // TODO: eventually make this function return a `ClientEntry` instead of an `Option`.
+        self.get(&key).into_option()
     }
 
     pub fn remove<K>(&mut self, key: &K)
@@ -315,20 +345,47 @@ impl ClientState {
         self.floating_clients.iter()
     }
 
+    fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.floating_clients.iter().chain(self.clients.iter())
+    }
+
     pub fn iter_hidden(&self) -> impl Iterator<Item = (&u64, &Client)> {
-        self.clients
-            .iter()
-            .filter(move |&(k, _)| !self.virtual_screens.front().unwrap().contains(k))
+        self.iter_all_clients()
+            .filter(move |&(k, _)| !self.is_client_visible(k))
     }
 
     pub fn iter_visible(&self) -> impl Iterator<Item = (&u64, &Client)> {
-        self.iter_floating().chain(self.iter_current_screen())
+        self.iter_all_clients()
+            .filter(move |&(k, _)| self.is_client_visible(k))
     }
 
     pub fn iter_current_screen(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.clients
             .iter()
-            .filter(move |&(k, _)| self.virtual_screens.front().unwrap().contains(k))
+            .filter(move |&(k, _)| self.current_vs().contains(k))
+    }
+
+    /// Returns reference to the current `VirtualScreen`.
+    fn current_vs(&self) -> &VirtualScreen {
+        // there is always at least one (1) virtual screen.
+        self.virtual_screens.front().unwrap()
+    }
+
+    fn is_client_visible<K>(&self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        match self.get(key) {
+            ClientEntry::Floating(c) => {
+                if let Some(transient_for) = c.transient_for {
+                    self.is_client_visible(&transient_for)
+                } else {
+                    true
+                }
+            }
+            ClientEntry::Tiled(_) => self.current_vs().contains(key),
+            _ => false,
+        }
     }
 
     pub fn get<K>(&self, key: &K) -> ClientEntry<&Client>
@@ -407,10 +464,18 @@ impl ClientState {
                 self.floating_clients.insert(key, client);
                 self.remove_from_virtual_screens(&key);
             }
-            (None, Some(client)) => {
-                self.clients.insert(key, client);
-                if let Some(vs) = self.virtual_screens.front_mut() {
-                    vs.insert(&key);
+            (None, Some(floating_client)) => {
+                // transient clients cannot be tiled
+                match floating_client.is_transient() {
+                    true => {
+                        self.floating_clients.insert(key, floating_client);
+                    }
+                    false => {
+                        self.clients.insert(key, floating_client);
+                        if let Some(vs) = self.virtual_screens.front_mut() {
+                            vs.insert(&key);
+                        }
+                    }
                 }
             }
             _ => {
@@ -539,12 +604,14 @@ impl ClientState {
             let width = width / (1 + i32::from(!vs.aux.is_empty()));
 
             // make sure we dont devide by 0
+            // height is max height / number of clients in the stack
             let master_height = height
                 / match NonZeroI32::new(vs.master.len() as i32) {
                     Some(i) => i.get(),
                     None => 1,
                 };
 
+            // height is max height / number of clients in the stack
             let aux_height = height
                 / match NonZeroI32::new(vs.aux.len() as i32) {
                     Some(i) => i.get(),
@@ -559,6 +626,7 @@ impl ClientState {
                 // add repeating height for each window and x pos for each window
                 .zip(repeat(master_height).zip(repeat(0i32)))
                 .chain(
+                    // same things for aux stack
                     vs.aux
                         .iter()
                         .enumerate()

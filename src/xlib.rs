@@ -4,10 +4,10 @@ use std::{ffi::CString, rc::Rc};
 use x11::xlib::{
     self, Atom, ButtonPressMask, CWEventMask, ControlMask, EnterWindowMask, FocusChangeMask,
     LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask,
-    PropertyChangeMask, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
+    PropertyChangeMask, ShiftMask, Status, StructureNotifyMask, SubstructureNotifyMask,
     SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen,
-    XEvent, XInternAtom, XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow, XSync,
-    XWarpPointer,
+    XEvent, XGetTransientForHint, XInternAtom, XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow,
+    XRootWindow, XSync, XWarpPointer,
 };
 use xlib::GrabModeAsync;
 
@@ -318,6 +318,27 @@ impl XLib {
         unsafe {
             XRaiseWindow(self.dpy(), client.window);
             XSync(self.dpy(), 0);
+        }
+    }
+
+    pub fn get_window_size(&self, window: Window) -> Option<(i32, i32)> {
+        let mut wa =
+            unsafe { std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed().assume_init() };
+
+        if unsafe { xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0 } {
+            Some((wa.width, wa.height))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_transient_for_window(&self, window: Window) -> Option<Window> {
+        let mut transient_for: Window = 0;
+
+        if unsafe { XGetTransientForHint(self.dpy(), window, &mut transient_for) != 0 } {
+            Some(transient_for)
+        } else {
+            None
         }
     }
 
