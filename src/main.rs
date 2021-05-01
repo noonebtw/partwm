@@ -50,7 +50,7 @@ fn init_logger() {
 
     let config = Config::builder()
         .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        //.appender(Appender::builder().build("logfile", Box::new(logfile)))
         .build(
             Root::builder()
                 .appender("stdout")

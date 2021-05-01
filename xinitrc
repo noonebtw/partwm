@@ -2,5 +2,6 @@
 
 /usr/bin/xset b off
 /usr/bin/xsetroot -solid darkslategrey
-/usr/bin/feh --bg-fill "/mnt/storage/rust/wm/starship.jpg"
-exec /mnt/storage/rust/wm/target/release/wm
+/usr/bin/feh --bg-fill "./starship.jpg"
+export RUST_BACKTRACE=1
+exec ./target/debug/wm >& &HOME/.portlights.log
