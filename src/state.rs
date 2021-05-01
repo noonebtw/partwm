@@ -408,13 +408,6 @@ impl WindowManager {
         self.raise_floating_clients();
     }
 
-    #[deprecated]
-    fn unfocus_client(&mut self) {
-        if let Some(client) = self.clients.unfocus().into_option() {
-            self.xlib.unfocus_client(client);
-        }
-    }
-
     fn new_client(&mut self, window: Window) {
         info!("new client: {:?}", window);
         let client = if let Some(transient_window) = self.xlib.get_transient_for_window(window) {

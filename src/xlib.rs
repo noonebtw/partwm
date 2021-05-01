@@ -5,11 +5,10 @@ use std::{ffi::CString, rc::Rc};
 use x11::xlib::{
     self, Atom, ButtonPressMask, ButtonReleaseMask, CWEventMask, ControlMask, CurrentTime,
     EnterWindowMask, FocusChangeMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
-    PointerMotionMask, PropertyChangeMask, ShiftMask, Status, StructureNotifyMask,
-    SubstructureNotifyMask, SubstructureRedirectMask, Window, XCloseDisplay,
-    XConfigureRequestEvent, XDefaultScreen, XEvent, XGetTransientForHint, XGrabPointer,
-    XInternAtom, XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow, XSync,
-    XUngrabPointer, XWarpPointer,
+    PointerMotionMask, PropertyChangeMask, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
+    SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen,
+    XEvent, XGetTransientForHint, XGrabPointer, XInternAtom, XKillClient, XMapWindow, XOpenDisplay,
+    XRaiseWindow, XRootWindow, XSetErrorHandler, XSync, XUngrabPointer, XWarpPointer,
 };
 use xlib::GrabModeAsync;
 
@@ -94,6 +93,8 @@ impl XLib {
             );
 
             xlib::XSelectInput(self.dpy(), self.root, window_attributes.event_mask);
+
+            XSetErrorHandler(Some(xlib_error_handler));
         }
 
         self.grab_global_keybinds(self.root);
@@ -593,5 +594,27 @@ impl Atoms {
                 },
             }
         }
+    }
+}
+
+#[allow(dead_code)]
+unsafe extern "C" fn xlib_error_handler(
+    _dpy: *mut x11::xlib::Display,
+    ee: *mut x11::xlib::XErrorEvent,
+) -> std::os::raw::c_int {
+    let err = ee.as_ref().unwrap();
+
+    if err.error_code == x11::xlib::BadWindow
+        || err.error_code == x11::xlib::BadDrawable
+        || err.error_code == x11::xlib::BadAccess
+        || err.error_code == x11::xlib::BadMatch
+    {
+        0
+    } else {
+        error!(
+            "wm: fatal error:\nrequest_code: {}\nerror_code: {}",
+            err.request_code, err.error_code
+        );
+        std::process::exit(1);
     }
 }

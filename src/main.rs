@@ -11,28 +11,6 @@ mod state;
 mod util;
 mod xlib;
 
-#[allow(dead_code)]
-unsafe extern "C" fn xlib_error_handler(
-    _dpy: *mut x11::xlib::Display,
-    ee: *mut x11::xlib::XErrorEvent,
-) -> std::os::raw::c_int {
-    let err = ee.as_ref().unwrap();
-
-    if err.error_code == x11::xlib::BadWindow
-        || err.error_code == x11::xlib::BadDrawable
-        || err.error_code == x11::xlib::BadAccess
-        || err.error_code == x11::xlib::BadMatch
-    {
-        0
-    } else {
-        error!(
-            "wm: fatal error:\nrequest_code: {}\nerror_code: {}",
-            err.request_code, err.error_code
-        );
-        std::process::exit(1);
-    }
-}
-
 fn init_logger() {
     let encoder = Box::new(PatternEncoder::new(
         "{d(%Y-%m-%d %H:%M:%S %Z)(utc)} │ {({M}::{f}:{L}):>25} │ {h({l:>5})} │ {m}{n}",
@@ -42,8 +20,7 @@ fn init_logger() {
 
     let home = dirs::home_dir().expect("Failed to get $HOME env var.");
 
-    let logfile = FileAppender::builder()
-        //.encoder(Box::new(PatternEncoder::default()))
+    let _logfile = FileAppender::builder()
         .encoder(encoder)
         .build(home.join(".local/portlights.log"))
         .unwrap();
@@ -54,7 +31,7 @@ fn init_logger() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .appender("logfile")
+                //.appender("logfile")
                 .build(log::LevelFilter::Info),
         )
         .unwrap();
