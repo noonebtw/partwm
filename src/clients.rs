@@ -146,12 +146,14 @@ mod tests {
             window: 1,
             size: (1, 1),
             position: (1, 1),
+            transient_for: None,
         });
 
         clients.insert(Client {
             window: 2,
             size: (1, 1),
             position: (1, 1),
+            transient_for: None,
         });
 
         clients.arrange_virtual_screen(600, 400, None);
@@ -174,6 +176,7 @@ mod tests {
             window: 3,
             size: (1, 1),
             position: (1, 1),
+            transient_for: None,
         });
 
         clients.arrange_virtual_screen(600, 400, None);
@@ -326,6 +329,12 @@ impl ClientState {
     where
         K: ClientKey,
     {
+        if let Some(focused_client) = self.focused {
+            if focused_client == key.key() {
+                self.focused = None;
+            }
+        }
+
         self.remove_from_virtual_screens(key);
 
         self.clients.remove(&key.key());
@@ -352,6 +361,10 @@ impl ClientState {
     pub fn iter_hidden(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.iter_all_clients()
             .filter(move |&(k, _)| !self.is_client_visible(k))
+    }
+
+    pub fn iter_transient(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.iter_floating().filter(|&(_, c)| c.is_transient())
     }
 
     pub fn iter_visible(&self) -> impl Iterator<Item = (&u64, &Client)> {
@@ -527,10 +540,15 @@ impl ClientState {
     {
         if self.contains(key) {
             match self.focused {
-                // focus the new client and return reference to it and the previously focused client.
                 Some(focused) => {
-                    self.focused = Some(key.key());
-                    (self.get(key), self.get(&focused))
+                    // If we are trying to focus the focused client, do nothing
+                    if focused == key.key() {
+                        (ClientEntry::Vacant, ClientEntry::Vacant)
+                    } else {
+                        // focus the new client and return reference to it and the previously focused client.
+                        self.focused = Some(key.key());
+                        (self.get(key), self.get(&focused))
+                    }
                 }
                 /*
                 not currently focusing any client

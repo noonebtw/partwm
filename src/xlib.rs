@@ -1,13 +1,15 @@
+use log::info;
 use std::ptr::{null, null_mut};
 use std::{ffi::CString, rc::Rc};
 
 use x11::xlib::{
-    self, Atom, ButtonPressMask, CWEventMask, ControlMask, EnterWindowMask, FocusChangeMask,
-    LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask,
-    PropertyChangeMask, ShiftMask, Status, StructureNotifyMask, SubstructureNotifyMask,
-    SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen,
-    XEvent, XGetTransientForHint, XInternAtom, XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow,
-    XRootWindow, XSync, XWarpPointer,
+    self, Atom, ButtonPressMask, ButtonReleaseMask, CWEventMask, ControlMask, CurrentTime,
+    EnterWindowMask, FocusChangeMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
+    PointerMotionMask, PropertyChangeMask, ShiftMask, Status, StructureNotifyMask,
+    SubstructureNotifyMask, SubstructureRedirectMask, Window, XCloseDisplay,
+    XConfigureRequestEvent, XDefaultScreen, XEvent, XGetTransientForHint, XGrabPointer,
+    XInternAtom, XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow, XSync,
+    XUngrabPointer, XWarpPointer,
 };
 use xlib::GrabModeAsync;
 
@@ -118,6 +120,16 @@ impl XLib {
         self.display.get()
     }
 
+    pub fn squash_event(&self, event_type: i32) -> XEvent {
+        unsafe {
+            let mut event = std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
+
+            while xlib::XCheckTypedEvent(self.dpy(), event_type, &mut event) != 0 {}
+
+            event
+        }
+    }
+
     pub fn next_event(&self) -> XEvent {
         unsafe {
             let mut event = std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
@@ -188,9 +200,12 @@ impl XLib {
         }
 
         self.send_event(client, self.atoms.take_focus);
+
+        self.raise_client(client);
     }
 
     pub fn unfocus_client(&self, client: &Client) {
+        info!("unfocusing client: {:?}", client);
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
@@ -420,6 +435,28 @@ impl XLib {
             unsafe {
                 XKillClient(self.dpy(), client.window);
             }
+        }
+    }
+
+    pub fn grab_cursor(&self) {
+        unsafe {
+            XGrabPointer(
+                self.dpy(),
+                self.root,
+                0,
+                (ButtonPressMask | ButtonReleaseMask | PointerMotionMask) as u32,
+                GrabModeAsync,
+                GrabModeAsync,
+                0,
+                0,
+                CurrentTime,
+            );
+        }
+    }
+
+    pub fn release_cursor(&self) {
+        unsafe {
+            XUngrabPointer(self.dpy(), CurrentTime);
         }
     }
 

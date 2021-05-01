@@ -71,6 +71,29 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("P", Mod1Mask),
+            |wm, _| {
+                wm.spawn(
+                    "dmenu_run",
+                    &[
+                        "-m",
+                        "0",
+                        "-fn",
+                        "'New York:size=13'",
+                        "-nb",
+                        "#222222",
+                        "-nf",
+                        "#bbbbbb",
+                        "-sb",
+                        "#dddddd",
+                        "-sf",
+                        "#eeeeee",
+                    ],
+                )
+            },
+        ));
+
+        self.add_keybind(KeyBinding::new(
             self.xlib.make_key("M", Mod1Mask),
             Self::handle_switch_stack,
         ));
@@ -182,6 +205,8 @@ impl WindowManager {
     }
 
     fn handle_switch_stack(&mut self, event: &XKeyEvent) {
+        info!("Switching stack for window{:?}", event.subwindow);
+
         self.clients.switch_stack_for_client(&event.subwindow);
 
         self.arrange_clients();
@@ -221,6 +246,7 @@ impl WindowManager {
             }
 
             xlib::MotionNotify => {
+                //let event = self.xlib.squash_event(xlib::MotionNotify);
                 let event: &XMotionEvent = event.as_ref();
 
                 if let Some(move_window) = &mut self.move_window {
@@ -271,6 +297,7 @@ impl WindowManager {
                     };
 
                     self.xlib.move_cursor(client.window, position);
+                    self.xlib.grab_cursor();
 
                     self.resize_window = Some(MoveWindow {
                         key: event.subwindow,
@@ -285,13 +312,16 @@ impl WindowManager {
 
                 if event.button == 3 && self.resize_window.is_some() {
                     self.resize_window = None;
+                    self.xlib.release_cursor();
                 }
             }
 
             xlib::MotionNotify => {
+                let event = self.xlib.squash_event(xlib::MotionNotify);
                 let event: &XMotionEvent = event.as_ref();
 
                 if let Some(resize_window) = &mut self.resize_window {
+                    info!("MotionNotify-resize");
                     let (x, y) = (
                         event.x - resize_window.cached_cursor_position.0,
                         event.y - resize_window.cached_cursor_position.1,
@@ -337,6 +367,16 @@ impl WindowManager {
             .for_each(|(_, c)| self.xlib.hide_client(c));
     }
 
+    fn raise_floating_clients(&self) {
+        self.clients
+            .iter_floating()
+            .for_each(|(_, c)| self.xlib.raise_client(c));
+
+        self.clients
+            .iter_transient()
+            .for_each(|(_, c)| self.xlib.raise_client(c));
+    }
+
     fn arrange_clients(&mut self) {
         let (width, height) = self.xlib.dimensions();
         self.clients.arrange_virtual_screen(width, height, Some(2));
@@ -347,9 +387,7 @@ impl WindowManager {
             .iter_visible()
             .for_each(|(_, c)| self.xlib.move_resize_client(c));
 
-        self.clients
-            .iter_floating()
-            .for_each(|(_, c)| self.xlib.raise_client(c));
+        self.raise_floating_clients();
     }
 
     fn focus_client<K>(&mut self, key: &K)
@@ -364,10 +402,13 @@ impl WindowManager {
 
         if let Some(new) = new.into_option() {
             self.xlib.focus_client(new);
+            self.xlib.raise_client(new);
         }
+
+        self.raise_floating_clients();
     }
 
-    #[allow(dead_code)]
+    #[deprecated]
     fn unfocus_client(&mut self) {
         if let Some(client) = self.clients.unfocus().into_option() {
             self.xlib.unfocus_client(client);
@@ -375,6 +416,7 @@ impl WindowManager {
     }
 
     fn new_client(&mut self, window: Window) {
+        info!("new client: {:?}", window);
         let client = if let Some(transient_window) = self.xlib.get_transient_for_window(window) {
             Client::new_transient(
                 window,
@@ -405,6 +447,7 @@ impl WindowManager {
 
     fn unmap_notify(&mut self, event: &XEvent) {
         let event: &XUnmapEvent = event.as_ref();
+        info!("unmap_notify: {:?}", event.window);
 
         self.clients.remove(&event.window);
 
@@ -413,6 +456,7 @@ impl WindowManager {
 
     fn destroy_notify(&mut self, event: &XEvent) {
         let event: &XDestroyWindowEvent = event.as_ref();
+        info!("destroy_notify: {:?}", event.window);
 
         self.clients.remove(&event.window);
 

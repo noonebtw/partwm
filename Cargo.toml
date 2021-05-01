@@ -10,3 +10,5 @@ edition = "2018"
 x11 = {version = "2.18.2", features = ["xlib"] }
 log = "0.4.13"
 simple_logger = "1.11.0"
+dirs = "3.0.2"
+log4rs = "1.0.0"
