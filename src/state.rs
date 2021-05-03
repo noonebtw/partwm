@@ -2,10 +2,14 @@ use std::rc::Rc;
 
 use log::{error, info};
 
-use x11::xlib::{self, ShiftMask, Window, XButtonEvent, XEvent, XKeyEvent, XMotionEvent};
+use x11::xlib::{
+    self, Mod4Mask, ShiftMask, Window, XButtonEvent, XEvent, XKeyEvent,
+    XMotionEvent,
+};
 use xlib::{
-    ButtonPressMask, ButtonReleaseMask, Mod1Mask, PointerMotionMask, XConfigureRequestEvent,
-    XCrossingEvent, XDestroyWindowEvent, XMapRequestEvent, XUnmapEvent,
+    ButtonPressMask, ButtonReleaseMask, PointerMotionMask,
+    XConfigureRequestEvent, XCrossingEvent, XDestroyWindowEvent,
+    XMapRequestEvent, XUnmapEvent,
 };
 
 use crate::{
@@ -14,15 +18,28 @@ use crate::{
     xlib::XLib,
 };
 
+/**
+Contains static config data for the window manager, the sort of stuff you might want to
+be able to configure in a config file.
+*/
+pub struct WMConfig {
+    num_virtualscreens: usize,
+    mod_key: u32,
+    gap: Option<i32>,
+}
+
 pub struct WindowManager {
     clients: ClientState,
     move_window: Option<MoveWindow>,
     resize_window: Option<MoveWindow>,
     keybinds: Vec<KeyBinding>,
     xlib: XLib,
+
+    last_rotation: Option<Direction>,
+    config: WMConfig,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Direction {
     Left,
     Right,
@@ -40,8 +57,9 @@ struct KeyBinding {
 }
 
 impl WindowManager {
-    pub fn new() -> Self {
-        let clients = ClientState::with_virtualscreens(3);
+    pub fn new(config: WMConfig) -> Self {
+        let clients =
+            ClientState::with_virtualscreens(config.num_virtualscreens);
         let xlib = XLib::new();
 
         Self {
@@ -50,28 +68,30 @@ impl WindowManager {
             resize_window: None,
             keybinds: Vec::new(),
             xlib,
+            last_rotation: None,
+            config,
         }
     }
 
     pub fn init(mut self) -> Self {
         self.xlib.add_global_keybind(KeyOrButton::button(
             1,
-            Mod1Mask,
+            self.config.mod_key,
             ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
         ));
         self.xlib.add_global_keybind(KeyOrButton::button(
             2,
-            Mod1Mask,
+            self.config.mod_key,
             ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
         ));
         self.xlib.add_global_keybind(KeyOrButton::button(
             3,
-            Mod1Mask,
+            self.config.mod_key,
             ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("P", Mod1Mask),
+            self.xlib.make_key("P", self.config.mod_key),
             |wm, _| {
                 wm.spawn(
                     "dmenu_run",
@@ -94,37 +114,63 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("M", Mod1Mask),
+            self.xlib.make_key("M", self.config.mod_key),
             Self::handle_switch_stack,
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Q", Mod1Mask),
+            self.xlib.make_key("Q", self.config.mod_key),
             Self::kill_client,
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Q", Mod1Mask | ShiftMask),
+            self.xlib.make_key("Q", self.config.mod_key | ShiftMask),
             |wm, _| wm.quit(),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("T", Mod1Mask),
+            self.xlib.make_key("T", self.config.mod_key),
             |wm, _| wm.spawn("alacritty", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Return", Mod1Mask | ShiftMask),
+            self.xlib
+                .make_key("Return", self.config.mod_key | ShiftMask),
             |wm, _| wm.spawn("alacritty", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Left", Mod1Mask),
+            self.xlib.make_key("Left", self.config.mod_key),
             |wm, _| wm.rotate_virtual_screen(Direction::Left),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Right", Mod1Mask),
+            self.xlib.make_key("Right", self.config.mod_key),
+            |wm, _| wm.rotate_virtual_screen(Direction::Right),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Tab", self.config.mod_key),
+            |wm, _| wm.rotate_virtual_screen_back(),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("J", self.config.mod_key),
+            |wm, _| wm.focus_master_stack(),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("K", self.config.mod_key),
+            |wm, _| wm.focus_aux_stack(),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("J", self.config.mod_key | ShiftMask),
+            |wm, _| wm.rotate_virtual_screen(Direction::Left),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("K", self.config.mod_key | ShiftMask),
             |wm, _| wm.rotate_virtual_screen(Direction::Right),
         ));
 
@@ -192,7 +238,9 @@ impl WindowManager {
             let event: &XButtonEvent = event.as_ref();
             let clean_mask = self.xlib.get_clean_mask();
 
-            if event.button == 2 && event.state & clean_mask == Mod1Mask & clean_mask {
+            if event.button == 2
+                && event.state & clean_mask == self.config.mod_key & clean_mask
+            {
                 if self.clients.contains(&event.subwindow) {
                     info!("toggleing floating for {:?}", event.subwindow);
 
@@ -221,7 +269,8 @@ impl WindowManager {
 
                 if self.move_window.is_none()
                     && event.button == 1
-                    && event.state & clean_mask == Mod1Mask & clean_mask
+                    && event.state & clean_mask
+                        == self.config.mod_key & clean_mask
                     && self.clients.contains(&event.subwindow)
                 {
                     // if client is tiled, set to floating
@@ -257,7 +306,9 @@ impl WindowManager {
 
                     move_window.cached_cursor_position = (event.x, event.y);
 
-                    if let Some(client) = self.clients.get_mut(&move_window.key).into_option() {
+                    if let Some(client) =
+                        self.clients.get_mut(&move_window.key).into_option()
+                    {
                         let position = &mut client.position;
                         position.0 += x;
                         position.1 += y;
@@ -279,7 +330,8 @@ impl WindowManager {
 
                 if self.resize_window.is_none()
                     && event.button == 3
-                    && event.state & clean_mask == Mod1Mask & clean_mask
+                    && event.state & clean_mask
+                        == self.config.mod_key & clean_mask
                     && self.clients.contains(&event.subwindow)
                 {
                     // if client is tiled, set to floating
@@ -329,7 +381,9 @@ impl WindowManager {
 
                     resize_window.cached_cursor_position = (event.x, event.y);
 
-                    if let Some(client) = self.clients.get_mut(&resize_window.key).into_option() {
+                    if let Some(client) =
+                        self.clients.get_mut(&resize_window.key).into_option()
+                    {
                         let size = &mut client.size;
 
                         size.0 = std::cmp::max(1, size.0 + x);
@@ -343,8 +397,16 @@ impl WindowManager {
         }
     }
 
+    fn rotate_virtual_screen_back(&mut self) {
+        if let Some(dir) = self.last_rotation {
+            self.rotate_virtual_screen(!dir);
+        }
+    }
+
     fn rotate_virtual_screen(&mut self, dir: Direction) {
         info!("rotateing VS: {:?}", dir);
+
+        self.last_rotation = Some(dir);
 
         match dir {
             Direction::Left => self.clients.rotate_left(),
@@ -354,10 +416,37 @@ impl WindowManager {
         self.arrange_clients();
 
         // focus first client in all visible clients
-        let to_focus = self.clients.iter_visible().next().map(|(k, _)| k).cloned();
+        let to_focus =
+            self.clients.iter_visible().next().map(|(k, _)| k).cloned();
 
         if let Some(key) = to_focus {
             self.focus_client(&key);
+        }
+    }
+
+    fn focus_master_stack(&mut self) {
+        let k = self
+            .clients
+            .iter_master_stack()
+            .map(|(k, _)| k)
+            .next()
+            .cloned();
+
+        if let Some(k) = k {
+            self.focus_client(&k);
+        }
+    }
+
+    fn focus_aux_stack(&mut self) {
+        let k = self
+            .clients
+            .iter_aux_stack()
+            .map(|(k, _)| k)
+            .next()
+            .cloned();
+
+        if let Some(k) = k {
+            self.focus_client(&k);
         }
     }
 
@@ -379,13 +468,14 @@ impl WindowManager {
 
     fn arrange_clients(&mut self) {
         let (width, height) = self.xlib.dimensions();
-        self.clients.arrange_virtual_screen(width, height, Some(2));
-
-        self.hide_hidden_clients();
+        self.clients
+            .arrange_virtual_screen(width, height, self.config.gap);
 
         self.clients
             .iter_visible()
             .for_each(|(_, c)| self.xlib.move_resize_client(c));
+
+        self.hide_hidden_clients();
 
         self.raise_floating_clients();
     }
@@ -410,7 +500,9 @@ impl WindowManager {
 
     fn new_client(&mut self, window: Window) {
         info!("new client: {:?}", window);
-        let client = if let Some(transient_window) = self.xlib.get_transient_for_window(window) {
+        let client = if let Some(transient_window) =
+            self.xlib.get_transient_for_window(window)
+        {
             Client::new_transient(
                 window,
                 self.xlib.get_window_size(window).unwrap_or((100, 100)),
@@ -499,6 +591,27 @@ impl KeyBinding {
         Self {
             key,
             closure: Rc::new(closure),
+        }
+    }
+}
+
+impl Default for WMConfig {
+    fn default() -> Self {
+        Self {
+            num_virtualscreens: 5,
+            mod_key: Mod4Mask,
+            gap: Some(2),
+        }
+    }
+}
+
+impl std::ops::Not for Direction {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
         }
     }
 }

@@ -5,6 +5,7 @@ use log4rs::{
     encode::pattern::PatternEncoder,
     Config,
 };
+use state::WMConfig;
 
 mod clients;
 mod state;
@@ -44,7 +45,7 @@ fn main() {
 
     log_prologue();
 
-    state::WindowManager::new().init().run();
+    state::WindowManager::new(WMConfig::default()).init().run();
 }
 
 fn log_prologue() {

@@ -3,12 +3,14 @@ use std::ptr::{null, null_mut};
 use std::{ffi::CString, rc::Rc};
 
 use x11::xlib::{
-    self, Atom, ButtonPressMask, ButtonReleaseMask, CWEventMask, ControlMask, CurrentTime,
-    EnterWindowMask, FocusChangeMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
-    PointerMotionMask, PropertyChangeMask, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
-    SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen,
-    XEvent, XGetTransientForHint, XGrabPointer, XInternAtom, XKillClient, XMapWindow, XOpenDisplay,
-    XRaiseWindow, XRootWindow, XSetErrorHandler, XSync, XUngrabPointer, XWarpPointer,
+    self, Atom, ButtonPressMask, ButtonReleaseMask, CWEventMask, ControlMask,
+    CurrentTime, EnterWindowMask, FocusChangeMask, LockMask, Mod1Mask,
+    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask,
+    PropertyChangeMask, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
+    SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent,
+    XDefaultScreen, XEvent, XGetTransientForHint, XGrabPointer, XInternAtom,
+    XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow,
+    XSetErrorHandler, XSync, XUngrabPointer, XWarpPointer,
 };
 use xlib::GrabModeAsync;
 
@@ -76,7 +78,8 @@ impl XLib {
     pub fn init(&mut self) {
         unsafe {
             let mut window_attributes =
-                std::mem::MaybeUninit::<xlib::XSetWindowAttributes>::zeroed().assume_init();
+                std::mem::MaybeUninit::<xlib::XSetWindowAttributes>::zeroed()
+                    .assume_init();
 
             window_attributes.event_mask = SubstructureRedirectMask
                 | StructureNotifyMask
@@ -92,7 +95,11 @@ impl XLib {
                 &mut window_attributes,
             );
 
-            xlib::XSelectInput(self.dpy(), self.root, window_attributes.event_mask);
+            xlib::XSelectInput(
+                self.dpy(),
+                self.root,
+                window_attributes.event_mask,
+            );
 
             XSetErrorHandler(Some(xlib_error_handler));
         }
@@ -123,9 +130,12 @@ impl XLib {
 
     pub fn squash_event(&self, event_type: i32) -> XEvent {
         unsafe {
-            let mut event = std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
+            let mut event =
+                std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
 
-            while xlib::XCheckTypedEvent(self.dpy(), event_type, &mut event) != 0 {}
+            while xlib::XCheckTypedEvent(self.dpy(), event_type, &mut event)
+                != 0
+            {}
 
             event
         }
@@ -133,7 +143,8 @@ impl XLib {
 
     pub fn next_event(&self) -> XEvent {
         unsafe {
-            let mut event = std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
+            let mut event =
+                std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
             xlib::XNextEvent(self.dpy(), &mut event);
 
             event
@@ -142,7 +153,8 @@ impl XLib {
 
     pub fn grab_key_or_button(&self, window: Window, key: &KeyOrButton) {
         let numlock_mask = self.get_numlock_mask();
-        let modifiers = vec![0, LockMask, numlock_mask, LockMask | numlock_mask];
+        let modifiers =
+            vec![0, LockMask, numlock_mask, LockMask | numlock_mask];
 
         for modifier in modifiers.iter() {
             match key {
@@ -215,7 +227,11 @@ impl XLib {
                 xlib::CurrentTime,
             );
 
-            xlib::XDeleteProperty(self.dpy(), self.root, self.atoms.active_window);
+            xlib::XDeleteProperty(
+                self.dpy(),
+                self.root,
+                self.atoms.active_window,
+            );
         }
     }
 
@@ -237,7 +253,8 @@ impl XLib {
                 xlib::XConfigureWindow(
                     self.dpy(),
                     client.window,
-                    (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth) as u32,
+                    (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth)
+                        as u32,
                     &mut windowchanges,
                 );
 
@@ -338,10 +355,14 @@ impl XLib {
     }
 
     pub fn get_window_size(&self, window: Window) -> Option<(i32, i32)> {
-        let mut wa =
-            unsafe { std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed().assume_init() };
+        let mut wa = unsafe {
+            std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
+                .assume_init()
+        };
 
-        if unsafe { xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0 } {
+        if unsafe {
+            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0
+        } {
             Some((wa.width, wa.height))
         } else {
             None
@@ -351,7 +372,9 @@ impl XLib {
     pub fn get_transient_for_window(&self, window: Window) -> Option<Window> {
         let mut transient_for: Window = 0;
 
-        if unsafe { XGetTransientForHint(self.dpy(), window, &mut transient_for) != 0 } {
+        if unsafe {
+            XGetTransientForHint(self.dpy(), window, &mut transient_for) != 0
+        } {
             Some(transient_for)
         } else {
             None
@@ -370,7 +393,12 @@ impl XLib {
         };
 
         unsafe {
-            xlib::XConfigureWindow(self.dpy(), event.window, event.value_mask as u32, &mut wc);
+            xlib::XConfigureWindow(
+                self.dpy(),
+                event.window,
+                event.value_mask as u32,
+                &mut wc,
+            );
         }
     }
 
@@ -409,7 +437,10 @@ impl XLib {
             xlib::XSelectInput(
                 self.dpy(),
                 window,
-                EnterWindowMask | FocusChangeMask | PropertyChangeMask | StructureNotifyMask,
+                EnterWindowMask
+                    | FocusChangeMask
+                    | PropertyChangeMask
+                    | StructureNotifyMask,
             );
         }
 
@@ -445,7 +476,8 @@ impl XLib {
                 self.dpy(),
                 self.root,
                 0,
-                (ButtonPressMask | ButtonReleaseMask | PointerMotionMask) as u32,
+                (ButtonPressMask | ButtonReleaseMask | PointerMotionMask)
+                    as u32,
                 GrabModeAsync,
                 GrabModeAsync,
                 0,
@@ -463,7 +495,17 @@ impl XLib {
 
     pub fn move_cursor(&self, window: Window, position: (i32, i32)) {
         unsafe {
-            XWarpPointer(self.dpy(), 0, window, 0, 0, 0, 0, position.0, position.1);
+            XWarpPointer(
+                self.dpy(),
+                0,
+                window,
+                0,
+                0,
+                0,
+                0,
+                position.0,
+                position.1,
+            );
         }
     }
 
@@ -472,7 +514,13 @@ impl XLib {
         let mut num_protos: i32 = 0;
 
         unsafe {
-            if xlib::XGetWMProtocols(self.dpy(), client.window, &mut protos, &mut num_protos) != 0 {
+            if xlib::XGetWMProtocols(
+                self.dpy(),
+                client.window,
+                &mut protos,
+                &mut num_protos,
+            ) != 0
+            {
                 for i in 0..num_protos {
                     if *protos.offset(i as isize) == proto {
                         return true;
@@ -503,7 +551,13 @@ impl XLib {
             };
 
             unsafe {
-                xlib::XSendEvent(self.dpy(), client.window, 0, xlib::NoEventMask, &mut event);
+                xlib::XSendEvent(
+                    self.dpy(),
+                    client.window,
+                    0,
+                    xlib::NoEventMask,
+                    &mut event,
+                );
             }
 
             true
@@ -543,7 +597,10 @@ impl XLib {
                     if *(*modmap)
                         .modifiermap
                         .offset((i * max_keypermod + j) as isize)
-                        == xlib::XKeysymToKeycode(self.dpy(), x11::keysym::XK_Num_Lock as u64)
+                        == xlib::XKeysymToKeycode(
+                            self.dpy(),
+                            x11::keysym::XK_Num_Lock as u64,
+                        )
                     {
                         return 1 << i;
                     }
@@ -556,7 +613,13 @@ impl XLib {
 
     pub fn get_clean_mask(&self) -> u32 {
         !(self.get_numlock_mask() | LockMask)
-            & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask)
+            & (ShiftMask
+                | ControlMask
+                | Mod1Mask
+                | Mod2Mask
+                | Mod3Mask
+                | Mod4Mask
+                | Mod5Mask)
     }
 }
 

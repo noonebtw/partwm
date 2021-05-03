@@ -32,7 +32,11 @@ mod client {
     }
 
     impl Client {
-        pub fn new(window: Window, size: (i32, i32), position: (i32, i32)) -> Self {
+        pub fn new(
+            window: Window,
+            size: (i32, i32),
+            position: (i32, i32),
+        ) -> Self {
             Self {
                 window,
                 size,
@@ -41,7 +45,11 @@ mod client {
             }
         }
 
-        pub fn new_transient(window: Window, size: (i32, i32), transient: Window) -> Self {
+        pub fn new_transient(
+            window: Window,
+            size: (i32, i32),
+            transient: Window,
+        ) -> Self {
             Self {
                 window,
                 size,
@@ -300,13 +308,17 @@ impl ClientState {
     pub fn insert(&mut self, mut client: Client) -> Option<&Client> {
         let key = client.key();
 
-        if client.is_transient() && self.contains(&client.transient_for.unwrap()) {
+        if client.is_transient()
+            && self.contains(&client.transient_for.unwrap())
+        {
             let transient = self.get(&client.transient_for.unwrap()).unwrap();
 
             client.position = {
                 (
-                    transient.position.0 + (transient.size.0 - client.size.0) / 2,
-                    transient.position.1 + (transient.size.1 - client.size.1) / 2,
+                    transient.position.0
+                        + (transient.size.0 - client.size.0) / 2,
+                    transient.position.1
+                        + (transient.size.1 - client.size.1) / 2,
                 )
             };
 
@@ -347,7 +359,8 @@ impl ClientState {
     {
         let key = key.key();
 
-        self.clients.contains_key(&key) || self.floating_clients.contains_key(&key)
+        self.clients.contains_key(&key)
+            || self.floating_clients.contains_key(&key)
     }
 
     pub fn iter_floating(&self) -> impl Iterator<Item = (&u64, &Client)> {
@@ -376,6 +389,18 @@ impl ClientState {
         self.clients
             .iter()
             .filter(move |&(k, _)| self.current_vs().contains(k))
+    }
+
+    pub fn iter_master_stack(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.clients
+            .iter()
+            .filter(move |&(k, _)| self.current_vs().is_in_master(k))
+    }
+
+    pub fn iter_aux_stack(&self) -> impl Iterator<Item = (&u64, &Client)> {
+        self.clients
+            .iter()
+            .filter(move |&(k, _)| self.current_vs().is_in_aux(k))
     }
 
     /// Returns reference to the current `VirtualScreen`.
@@ -510,31 +535,39 @@ impl ClientState {
     where
         K: ClientKey,
     {
-        self.virtual_screens
-            .iter()
-            .find_map(|vs| if vs.contains(key) { Some(vs) } else { None })
+        self.virtual_screens.iter().find_map(|vs| {
+            if vs.contains(key) {
+                Some(vs)
+            } else {
+                None
+            }
+        })
     }
 
-    fn get_mut_virtualscreen_for_client<K>(&mut self, key: &K) -> Option<&mut VirtualScreen>
+    fn get_mut_virtualscreen_for_client<K>(
+        &mut self,
+        key: &K,
+    ) -> Option<&mut VirtualScreen>
     where
         K: ClientKey,
     {
-        self.virtual_screens.iter_mut().find_map(
-            |vs| {
-                if vs.contains(key) {
-                    Some(vs)
-                } else {
-                    None
-                }
-            },
-        )
+        self.virtual_screens.iter_mut().find_map(|vs| {
+            if vs.contains(key) {
+                Some(vs)
+            } else {
+                None
+            }
+        })
     }
 
     /**
     focuses client `key` if it contains `key` and returns a reference to the  newly and the previously
     focused clients if any.
     */
-    pub fn focus_client<K>(&mut self, key: &K) -> (ClientEntry<&Client>, ClientEntry<&Client>)
+    pub fn focus_client<K>(
+        &mut self,
+        key: &K,
+    ) -> (ClientEntry<&Client>, ClientEntry<&Client>)
     where
         K: ClientKey,
     {
@@ -613,7 +646,12 @@ impl ClientState {
     screen width and screen height.
     Optionally adds a gap between windows `gap.unwrap_or(0)` pixels wide.
     */
-    pub fn arrange_virtual_screen(&mut self, width: i32, height: i32, gap: Option<i32>) {
+    pub fn arrange_virtual_screen(
+        &mut self,
+        width: i32,
+        height: i32,
+        gap: Option<i32>,
+    ) {
         let gap = gap.unwrap_or(0);
 
         // should be fine to unwrap since we will always have at least 1 virtual screen
@@ -687,6 +725,20 @@ impl VirtualScreen {
         self.master.contains(&key.key()) || self.aux.contains(&key.key())
     }
 
+    fn is_in_master<K>(&self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        self.master.contains(&key.key())
+    }
+
+    fn is_in_aux<K>(&self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        self.aux.contains(&key.key())
+    }
+
     fn insert<K>(&mut self, key: &K)
     where
         K: ClientKey,
@@ -716,7 +768,8 @@ impl VirtualScreen {
                 self.aux.extend(self.master.drain(index..=index));
             }
             None => {
-                let index = self.aux.iter().position(|&k| k == key.key()).unwrap();
+                let index =
+                    self.aux.iter().position(|&k| k == key.key()).unwrap();
                 self.master.extend(self.aux.drain(index..=index));
             }
         }
