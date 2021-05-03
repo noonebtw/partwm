@@ -461,9 +461,9 @@ impl XLib {
         }
     }
 
-    pub fn move_cursor(&self, window: Window, position: (i32, i32)) {
+    pub fn move_cursor(&self, window: Option<Window>, position: (i32, i32)) {
         unsafe {
-            XWarpPointer(self.dpy(), 0, window, 0, 0, 0, 0, position.0, position.1);
+            XWarpPointer(self.dpy(), 0, self.root, 0, 0, 0, 0, position.0, position.1);
         }
     }
 
@@ -557,6 +557,16 @@ impl XLib {
     pub fn get_clean_mask(&self) -> u32 {
         !(self.get_numlock_mask() | LockMask)
             & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask)
+    }
+
+    pub fn clean_mask(&self, mask: u32) -> u32 {
+        mask & self.get_clean_mask()
+    }
+
+    pub fn are_masks_equal(&self, rhs: u32, lhs: u32) -> bool {
+        let clean = self.get_clean_mask();
+
+        rhs & clean == lhs & clean
     }
 }
 

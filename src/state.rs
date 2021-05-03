@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use log::{error, info};
 
-use x11::xlib::{self, ShiftMask, Window, XButtonEvent, XEvent, XKeyEvent, XMotionEvent};
+use x11::xlib::{
+    self, ShiftMask, Window, XButtonEvent, XButtonPressedEvent, XButtonReleasedEvent, XEvent,
+    XKeyEvent, XMotionEvent,
+};
 use xlib::{
     ButtonPressMask, ButtonReleaseMask, Mod1Mask, PointerMotionMask, XConfigureRequestEvent,
     XCrossingEvent, XDestroyWindowEvent, XMapRequestEvent, XUnmapEvent,
@@ -16,8 +19,7 @@ use crate::{
 
 pub struct WindowManager {
     clients: ClientState,
-    move_window: Option<MoveWindow>,
-    resize_window: Option<MoveWindow>,
+    move_resize_window: MoveResizeInfo,
     keybinds: Vec<KeyBinding>,
     xlib: XLib,
 }
@@ -28,9 +30,22 @@ pub enum Direction {
     Right,
 }
 
-struct MoveWindow {
-    key: Window,
-    cached_cursor_position: (i32, i32),
+enum MoveResizeInfo {
+    Move(MoveInfoInner),
+    Resize(ResizeInfoInner),
+    None,
+}
+
+struct MoveInfoInner {
+    window: Window,
+    starting_cursor_pos: (i32, i32),
+    starting_window_pos: (i32, i32),
+}
+
+struct ResizeInfoInner {
+    window: Window,
+    starting_cursor_pos: (i32, i32),
+    starting_window_size: (i32, i32),
 }
 
 #[derive(Clone)]
@@ -46,8 +61,7 @@ impl WindowManager {
 
         Self {
             clients,
-            move_window: None,
-            resize_window: None,
+            move_resize_window: MoveResizeInfo::None,
             keybinds: Vec::new(),
             xlib,
         }
@@ -142,17 +156,15 @@ impl WindowManager {
         loop {
             let event = self.xlib.next_event();
 
-            self.handle_toggle_floating(&event);
-            self.handle_move_window(&event);
-            self.handle_resize_client(&event);
-
             match event.get_type() {
                 xlib::MapRequest => self.map_request(&event),
                 xlib::UnmapNotify => self.unmap_notify(&event),
                 xlib::ConfigureRequest => self.configure_request(&event),
                 xlib::EnterNotify => self.enter_notify(&event),
                 xlib::DestroyNotify => self.destroy_notify(&event),
-                xlib::ButtonPress => self.button_notify(&event),
+                xlib::ButtonPress => self.button_press(event.as_ref()),
+                xlib::ButtonRelease => self.button_release(event.as_ref()),
+                xlib::MotionNotify => self.motion_notify(event.as_ref()),
                 xlib::KeyPress => self.handle_keybinds(event.as_ref()),
                 _ => {}
             }
@@ -210,137 +222,6 @@ impl WindowManager {
         self.clients.switch_stack_for_client(&event.subwindow);
 
         self.arrange_clients();
-    }
-
-    fn handle_move_window(&mut self, event: &XEvent) {
-        let clean_mask = self.xlib.get_clean_mask();
-
-        match event.get_type() {
-            xlib::ButtonPress => {
-                let event: &XButtonEvent = event.as_ref();
-
-                if self.move_window.is_none()
-                    && event.button == 1
-                    && event.state & clean_mask == Mod1Mask & clean_mask
-                    && self.clients.contains(&event.subwindow)
-                {
-                    // if client is tiled, set to floating
-                    if self.clients.set_floating(&event.subwindow) {
-                        self.arrange_clients();
-                    }
-
-                    self.move_window = Some(MoveWindow {
-                        key: event.subwindow,
-                        cached_cursor_position: (event.x, event.y),
-                    });
-                }
-            }
-
-            // reset on release
-            xlib::ButtonRelease => {
-                let event: &XButtonEvent = event.as_ref();
-
-                if event.button == 1 && self.move_window.is_some() {
-                    self.move_window = None;
-                }
-            }
-
-            xlib::MotionNotify => {
-                //let event = self.xlib.squash_event(xlib::MotionNotify);
-                let event: &XMotionEvent = event.as_ref();
-
-                if let Some(move_window) = &mut self.move_window {
-                    let (x, y) = (
-                        event.x - move_window.cached_cursor_position.0,
-                        event.y - move_window.cached_cursor_position.1,
-                    );
-
-                    move_window.cached_cursor_position = (event.x, event.y);
-
-                    if let Some(client) = self.clients.get_mut(&move_window.key).into_option() {
-                        let position = &mut client.position;
-                        position.0 += x;
-                        position.1 += y;
-
-                        self.xlib.move_client(client);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_resize_client(&mut self, event: &XEvent) {
-        let clean_mask = self.xlib.get_clean_mask();
-
-        match event.get_type() {
-            xlib::ButtonPress => {
-                let event: &XButtonEvent = event.as_ref();
-
-                if self.resize_window.is_none()
-                    && event.button == 3
-                    && event.state & clean_mask == Mod1Mask & clean_mask
-                    && self.clients.contains(&event.subwindow)
-                {
-                    // if client is tiled, set to floating
-                    if self.clients.set_floating(&event.subwindow) {
-                        self.arrange_clients();
-                    }
-
-                    let client = self.clients.get(&event.subwindow).unwrap();
-
-                    let position = {
-                        (
-                            client.position.0 + client.size.0,
-                            client.position.1 + client.size.1,
-                        )
-                    };
-
-                    self.xlib.move_cursor(client.window, position);
-                    self.xlib.grab_cursor();
-
-                    self.resize_window = Some(MoveWindow {
-                        key: event.subwindow,
-                        cached_cursor_position: position,
-                    });
-                }
-            }
-
-            // reset on release
-            xlib::ButtonRelease => {
-                let event: &XButtonEvent = event.as_ref();
-
-                if event.button == 3 && self.resize_window.is_some() {
-                    self.resize_window = None;
-                    self.xlib.release_cursor();
-                }
-            }
-
-            xlib::MotionNotify => {
-                let event = self.xlib.squash_event(xlib::MotionNotify);
-                let event: &XMotionEvent = event.as_ref();
-
-                if let Some(resize_window) = &mut self.resize_window {
-                    info!("MotionNotify-resize");
-                    let (x, y) = (
-                        event.x - resize_window.cached_cursor_position.0,
-                        event.y - resize_window.cached_cursor_position.1,
-                    );
-
-                    resize_window.cached_cursor_position = (event.x, event.y);
-
-                    if let Some(client) = self.clients.get_mut(&resize_window.key).into_option() {
-                        let size = &mut client.size;
-
-                        size.0 = std::cmp::max(1, size.0 + x);
-                        size.1 = std::cmp::max(1, size.1 + y);
-
-                        self.xlib.resize_client(client);
-                    }
-                }
-            }
-            _ => {}
-        }
     }
 
     fn rotate_virtual_screen(&mut self, dir: Direction) {
@@ -471,13 +352,126 @@ impl WindowManager {
         self.focus_client(&event.window);
     }
 
-    fn button_notify(&mut self, event: &XEvent) {
-        let event: &XButtonEvent = event.as_ref();
+    /// ensure event.subwindow refers to a valid client.
+    fn start_move_resize_window(&mut self, event: &XButtonPressedEvent) {
+        let window = event.subwindow;
 
-        self.focus_client(&event.subwindow);
-        if let Some(client) = self.clients.get(&event.subwindow).into_option() {
-            self.xlib.raise_client(client);
+        match event.button {
+            1 => {
+                if self.clients.set_floating(&window) {
+                    self.arrange_clients();
+                }
+
+                self.move_resize_window = MoveResizeInfo::Move(MoveInfoInner {
+                    window,
+                    starting_cursor_pos: (event.x, event.y),
+                    starting_window_pos: self.clients.get(&window).unwrap().position,
+                });
+            }
+            3 => {
+                if self.clients.set_floating(&window) {
+                    self.arrange_clients();
+                }
+
+                let client = self.clients.get(&window).unwrap();
+
+                let corner_pos = {
+                    (
+                        client.position.0 + client.size.0,
+                        client.position.1 + client.size.1,
+                    )
+                };
+
+                self.xlib.move_cursor(None, corner_pos);
+                self.xlib.grab_cursor();
+
+                self.move_resize_window = MoveResizeInfo::Resize(ResizeInfoInner {
+                    window,
+                    starting_cursor_pos: corner_pos,
+                    starting_window_size: client.size,
+                });
+            }
+            _ => {}
         }
+    }
+
+    fn end_move_resize_window(&mut self, event: &XButtonReleasedEvent) {
+        if event.button == 1 || event.button == 3 {
+            self.move_resize_window = MoveResizeInfo::None;
+        }
+        if event.button == 3 {
+            self.xlib.release_cursor();
+        }
+    }
+
+    fn do_move_resize_window(&mut self, event: &XMotionEvent) {
+        match &self.move_resize_window {
+            MoveResizeInfo::Move(info) => {
+                let (x, y) = (
+                    event.x - info.starting_cursor_pos.0,
+                    event.y - info.starting_cursor_pos.1,
+                );
+
+                if let Some(client) = self.clients.get_mut(&info.window).into_option() {
+                    let position = &mut client.position;
+
+                    position.0 = info.starting_window_pos.0 + x;
+                    position.1 = info.starting_window_pos.1 + y;
+
+                    self.xlib.move_client(client);
+                }
+            }
+            MoveResizeInfo::Resize(info) => {
+                let (x, y) = (
+                    event.x - info.starting_cursor_pos.0,
+                    event.y - info.starting_cursor_pos.1,
+                );
+
+                if let Some(client) = self.clients.get_mut(&info.window).into_option() {
+                    let size = &mut client.size;
+
+                    size.0 = std::cmp::max(1, info.starting_window_size.0 + x);
+                    size.1 = std::cmp::max(1, info.starting_window_size.1 + y);
+
+                    self.xlib.resize_client(client);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn button_press(&mut self, event: &XButtonPressedEvent) {
+        self.focus_client(&event.subwindow);
+
+        match event.button {
+            1 | 3 => match self.move_resize_window {
+                MoveResizeInfo::None
+                    if self.xlib.are_masks_equal(event.state, Mod1Mask)
+                        && self.clients.contains(&event.subwindow) =>
+                {
+                    self.start_move_resize_window(event)
+                }
+                _ => {}
+            },
+            2 => {
+                self.clients.toggle_floating(&event.subwindow);
+                self.arrange_clients();
+            }
+            _ => {}
+        }
+    }
+
+    fn button_release(&mut self, event: &XButtonReleasedEvent) {
+        match self.move_resize_window {
+            MoveResizeInfo::None => {}
+            _ => {
+                self.end_move_resize_window(event);
+            }
+        }
+    }
+
+    fn motion_notify(&mut self, event: &XMotionEvent) {
+        self.do_move_resize_window(event);
     }
 
     pub fn spawn(&self, command: &str, args: &[&str]) {
