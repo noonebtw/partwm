@@ -95,6 +95,8 @@ impl XLib {
             xlib::XSelectInput(self.dpy(), self.root, window_attributes.event_mask);
 
             XSetErrorHandler(Some(xlib_error_handler));
+
+            XSync(self.dpy(), 0);
         }
 
         self.grab_global_keybinds(self.root);
@@ -243,8 +245,6 @@ impl XLib {
 
                 // I don't think I have to call this ~
                 //self.configure_client(client);
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -270,8 +270,6 @@ impl XLib {
                     (xlib::CWX | xlib::CWY) as u32,
                     &mut wc,
                 );
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -297,8 +295,6 @@ impl XLib {
                     (xlib::CWWidth | xlib::CWHeight) as u32,
                     &mut wc,
                 );
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -324,8 +320,6 @@ impl XLib {
                     (xlib::CWX | xlib::CWY) as u32,
                     &mut wc,
                 );
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -333,7 +327,6 @@ impl XLib {
     pub fn raise_client(&self, client: &Client) {
         unsafe {
             XRaiseWindow(self.dpy(), client.window);
-            XSync(self.dpy(), 0);
         }
     }
 
