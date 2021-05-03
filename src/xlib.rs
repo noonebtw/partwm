@@ -102,6 +102,8 @@ impl XLib {
             );
 
             XSetErrorHandler(Some(xlib_error_handler));
+
+            XSync(self.dpy(), 0);
         }
 
         self.grab_global_keybinds(self.root);
@@ -128,6 +130,7 @@ impl XLib {
         self.display.get()
     }
 
+    #[allow(dead_code)]
     pub fn squash_event(&self, event_type: i32) -> XEvent {
         unsafe {
             let mut event =
@@ -260,8 +263,6 @@ impl XLib {
 
                 // I don't think I have to call this ~
                 //self.configure_client(client);
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -287,8 +288,6 @@ impl XLib {
                     (xlib::CWX | xlib::CWY) as u32,
                     &mut wc,
                 );
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -314,8 +313,6 @@ impl XLib {
                     (xlib::CWWidth | xlib::CWHeight) as u32,
                     &mut wc,
                 );
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -341,8 +338,6 @@ impl XLib {
                     (xlib::CWX | xlib::CWY) as u32,
                     &mut wc,
                 );
-
-                xlib::XSync(self.dpy(), 0);
             }
         }
     }
@@ -350,7 +345,6 @@ impl XLib {
     pub fn raise_client(&self, client: &Client) {
         unsafe {
             XRaiseWindow(self.dpy(), client.window);
-            XSync(self.dpy(), 0);
         }
     }
 
@@ -493,12 +487,12 @@ impl XLib {
         }
     }
 
-    pub fn move_cursor(&self, window: Window, position: (i32, i32)) {
+    pub fn move_cursor(&self, window: Option<Window>, position: (i32, i32)) {
         unsafe {
             XWarpPointer(
                 self.dpy(),
                 0,
-                window,
+                window.unwrap_or(self.root),
                 0,
                 0,
                 0,
@@ -620,6 +614,17 @@ impl XLib {
                 | Mod3Mask
                 | Mod4Mask
                 | Mod5Mask)
+    }
+
+    #[allow(dead_code)]
+    pub fn clean_mask(&self, mask: u32) -> u32 {
+        mask & self.get_clean_mask()
+    }
+
+    pub fn are_masks_equal(&self, rhs: u32, lhs: u32) -> bool {
+        let clean = self.get_clean_mask();
+
+        rhs & clean == lhs & clean
     }
 }
 
