@@ -443,10 +443,15 @@ impl XLib {
 
     pub fn dimensions(&self) -> (i32, i32) {
         unsafe {
-            (
-                xlib::XDisplayWidth(self.dpy(), self.screen),
-                xlib::XDisplayHeight(self.dpy(), self.screen),
-            )
+            let mut wa =
+                std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
+                    .assume_init();
+
+            xlib::XGetWindowAttributes(self.dpy(), self.root, &mut wa);
+
+            info!("Root window dimensions: {}, {}", wa.width, wa.height);
+
+            (wa.width, wa.height)
         }
     }
 

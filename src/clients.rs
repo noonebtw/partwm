@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroI32;
 
-use log::{debug, error};
+use log::{error, info};
 
 use crate::util::BuildIdentityHasher;
 
@@ -631,17 +631,6 @@ impl ClientState {
     }
 
     /**
-    there should be no need to call this function since a `VirtualScreen` refreshes it self on
-    client removal.
-    */
-    #[deprecated]
-    fn refresh_virtual_screen(&mut self) {
-        if let Some(vs) = self.virtual_screens.front_mut() {
-            vs.refresh();
-        }
-    }
-
-    /**
     resizes and moves clients on the current virtual screen with `width` and `height` as
     screen width and screen height.
     Optionally adds a gap between windows `gap.unwrap_or(0)` pixels wide.
@@ -657,24 +646,25 @@ impl ClientState {
         // should be fine to unwrap since we will always have at least 1 virtual screen
         if let Some(vs) = self.virtual_screens.front_mut() {
             // if aux is empty -> width : width / 2
-            let width = width / (1 + i32::from(!vs.aux.is_empty()));
+            let width = (width - gap * 2) / (1 + i32::from(!vs.aux.is_empty()));
 
             // make sure we dont devide by 0
             // height is max height / number of clients in the stack
-            let master_height = height
+            let master_height = (height - gap * 2)
                 / match NonZeroI32::new(vs.master.len() as i32) {
                     Some(i) => i.get(),
                     None => 1,
                 };
 
             // height is max height / number of clients in the stack
-            let aux_height = height
+            let aux_height = (height - gap * 2)
                 / match NonZeroI32::new(vs.aux.len() as i32) {
                     Some(i) => i.get(),
                     None => 1,
                 };
 
-            // chaining master and aux together with `Zip`s for height and x reduces duplicate code
+            // chaining master and aux together with `Zip`s for height and x
+            // reduces duplicate code
             for ((i, key), (height, x)) in vs
                 .master
                 .iter()
@@ -690,7 +680,7 @@ impl ClientState {
                 )
             {
                 let size = (width - gap * 2, height - gap * 2);
-                let position = (x + gap, height * i as i32 + gap);
+                let position = (x + gap * 2, height * i as i32 + gap * 2);
 
                 if let Some(client) = self.clients.get_mut(key) {
                     *client = Client {
@@ -702,7 +692,7 @@ impl ClientState {
             }
         }
 
-        debug!("{:#?}", self);
+        info!("{:#?}", self);
     }
 
     // Should have xlib send those changes back to the x server after this function
