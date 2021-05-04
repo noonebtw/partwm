@@ -3,14 +3,15 @@ use std::ptr::{null, null_mut};
 use std::{ffi::CString, rc::Rc};
 
 use x11::xlib::{
-    self, Atom, ButtonPressMask, ButtonReleaseMask, CWEventMask, ControlMask,
-    CurrentTime, EnterWindowMask, FocusChangeMask, LockMask, Mod1Mask,
-    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask,
-    PropertyChangeMask, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
-    SubstructureRedirectMask, Window, XCloseDisplay, XConfigureRequestEvent,
-    XDefaultScreen, XEvent, XGetTransientForHint, XGrabPointer, XInternAtom,
-    XKillClient, XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow,
-    XSetErrorHandler, XSync, XUngrabPointer, XWarpPointer,
+    self, AnyButton, AnyKey, AnyModifier, Atom, ButtonPressMask,
+    ButtonReleaseMask, CWEventMask, ControlMask, CurrentTime, EnterWindowMask,
+    FocusChangeMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask,
+    Mod5Mask, PointerMotionMask, PropertyChangeMask, ShiftMask,
+    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask,
+    Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen, XEvent,
+    XGetTransientForHint, XGrabPointer, XInternAtom, XKillClient, XMapWindow,
+    XOpenDisplay, XRaiseWindow, XRootWindow, XSetErrorHandler, XSync,
+    XUngrabButton, XUngrabKey, XUngrabPointer, XWarpPointer,
 };
 use xlib::GrabModeAsync;
 
@@ -21,7 +22,7 @@ use crate::clients::Client;
 pub struct XLib {
     display: Display,
     root: Window,
-    screen: i32,
+    _screen: i32,
     atoms: Atoms,
     global_keybinds: Vec<KeyOrButton>,
 }
@@ -54,7 +55,7 @@ pub struct Display(Rc<*mut xlib::Display>);
 
 impl XLib {
     pub fn new() -> Self {
-        let (display, screen, root) = unsafe {
+        let (display, _screen, root) = unsafe {
             let display = XOpenDisplay(null());
 
             assert_ne!(display, null_mut());
@@ -70,7 +71,7 @@ impl XLib {
             atoms: Atoms::init(display.clone()),
             global_keybinds: Vec::new(),
             root,
-            screen,
+            _screen,
             display,
         }
     }
@@ -111,6 +112,14 @@ impl XLib {
 
     pub fn add_global_keybind(&mut self, key: KeyOrButton) {
         self.global_keybinds.push(key);
+    }
+
+    #[allow(dead_code)]
+    fn ungrab_global_keybings(&self, window: Window) {
+        unsafe {
+            XUngrabButton(self.dpy(), AnyButton as u32, AnyModifier, window);
+            XUngrabKey(self.dpy(), AnyKey, AnyModifier, window);
+        }
     }
 
     fn grab_global_keybinds(&self, window: Window) {
@@ -218,21 +227,22 @@ impl XLib {
         self.send_event(client, self.atoms.take_focus);
     }
 
-    pub fn unfocus_client(&self, client: &Client) {
+    pub fn unfocus_client(&self, _client: &Client) {
         //info!("unfocusing client: {:?}", client);
+
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
-                client.window,
+                self.root,
                 xlib::RevertToPointerRoot,
                 xlib::CurrentTime,
             );
 
-            xlib::XDeleteProperty(
-                self.dpy(),
-                self.root,
-                self.atoms.active_window,
-            );
+            // xlib::XDeleteProperty(
+            //     self.dpy(),
+            //     self.root,
+            //     self.atoms.active_window,
+            // );
         }
     }
 

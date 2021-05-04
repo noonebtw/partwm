@@ -1,7 +1,5 @@
-#![allow(dead_code)]
-
 use std::num::NonZeroI32;
-use std::{collections::HashMap, ops::Rem, usize};
+use std::{ops::Rem, usize};
 
 use indexmap::IndexMap;
 use log::{error, info};
@@ -33,6 +31,7 @@ mod client {
     }
 
     impl Client {
+        #[allow(dead_code)]
         pub fn new(
             window: Window,
             size: (i32, i32),
@@ -279,8 +278,6 @@ impl ClientState {
             }
         }
 
-        self.focus_client(&key);
-
         // adding a client changes the liling layout, rearrange
         self.arrange_virtual_screen();
 
@@ -339,6 +336,19 @@ impl ClientState {
             .filter(move |&(k, _)| self.is_client_visible(k))
     }
 
+    #[allow(dead_code)]
+    pub fn iter_visible_ordered(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
+        self.iter_master_stack()
+            .chain(
+                self.iter_floating()
+                    .filter(move |&(k, _)| self.is_client_visible(k)),
+            )
+            .chain(self.iter_aux_stack())
+    }
+
+    #[allow(dead_code)]
     pub fn iter_current_screen(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.clients
             .iter()
@@ -346,15 +356,17 @@ impl ClientState {
     }
 
     pub fn iter_master_stack(&self) -> impl Iterator<Item = (&u64, &Client)> {
-        self.clients
+        self.current_vs()
+            .master
             .iter()
-            .filter(move |&(k, _)| self.current_vs().is_in_master(k))
+            .map(move |k| (k, self.get(k).unwrap()))
     }
 
     pub fn iter_aux_stack(&self) -> impl Iterator<Item = (&u64, &Client)> {
-        self.clients
+        self.current_vs()
+            .aux
             .iter()
-            .filter(move |&(k, _)| self.current_vs().is_in_aux(k))
+            .map(move |k| (k, self.get(k).unwrap()))
     }
 
     /// Returns reference to the current `VirtualScreen`.
@@ -414,16 +426,16 @@ impl ClientState {
         }
     }
 
-    pub fn rotate_right(&mut self, n: Option<usize>) {
+    pub fn rotate_right(&mut self, n: usize) {
         self.virtual_screens
-            .rotate_right(n.unwrap_or(1).rem(self.virtual_screens.len()));
+            .rotate_right(n.rem(self.virtual_screens.len()));
 
         self.arrange_virtual_screen();
     }
 
-    pub fn rotate_left(&mut self, n: Option<usize>) {
+    pub fn rotate_left(&mut self, n: usize) {
         self.virtual_screens
-            .rotate_left(n.unwrap_or(1).rem(self.virtual_screens.len()));
+            .rotate_left(n.rem(self.virtual_screens.len()));
 
         self.arrange_virtual_screen();
     }
@@ -529,6 +541,23 @@ impl ClientState {
         })
     }
 
+    pub fn get_stack_for_client<K>(&self, key: &K) -> Option<&Vec<u64>>
+    where
+        K: ClientKey,
+    {
+        if let Some(vs) = self.get_virtualscreen_for_client(key) {
+            if vs.is_in_aux(key) {
+                Some(&vs.aux)
+            } else if vs.is_in_master(key) {
+                Some(&vs.master)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     /**
     focuses client `key` if it contains `key` and returns a reference to the  newly and the previously
     focused clients if any.
@@ -540,11 +569,29 @@ impl ClientState {
     where
         K: ClientKey,
     {
+        let (new, old) = self.focus_client_inner(key);
+
+        info!("Swapping focus: new({:?}) old({:?})", new, old);
+
+        (new, old)
+    }
+
+    fn focus_client_inner<K>(
+        &mut self,
+        key: &K,
+    ) -> (ClientEntry<&Client>, ClientEntry<&Client>)
+    where
+        K: ClientKey,
+    {
+        // if `key` is not a valid entry into the client list, do nothing
         if self.contains(key) {
+            // check if we currently have a client focused
             match self.focused {
                 Some(focused) => {
-                    // If we are trying to focus the focused client, do nothing
                     if focused == key.key() {
+                        // if `key` is a reference to the focused client
+                        // dont bother unfocusing and refocusing the same client
+
                         (ClientEntry::Vacant, ClientEntry::Vacant)
                     } else {
                         // focus the new client and return reference to it
@@ -554,17 +601,18 @@ impl ClientState {
                         (self.get(key), self.get(&focused))
                     }
                 }
-                /*
-                not currently focusing any client
-                focus the new client and return reference to it.
-                */
+
                 None => {
+                    // not currently focusing any client
+                    // just focus and return the client `key` references
+
                     self.focused = Some(key.key());
                     (self.get(key), ClientEntry::Vacant)
                 }
             }
         } else {
-            // key is not a reference to a valid client
+            // nothing happened, return nothing
+
             (ClientEntry::Vacant, ClientEntry::Vacant)
         }
     }
@@ -573,6 +621,7 @@ impl ClientState {
     sets `self.focused` to `None` and returns a reference to
     the previously focused Client if any.
     */
+    #[allow(dead_code)]
     pub fn unfocus(&mut self) -> ClientEntry<&Client> {
         match self.focused {
             Some(focused) => {
@@ -583,6 +632,7 @@ impl ClientState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_focused<K>(&self, key: &K) -> bool
     where
         K: ClientKey,
@@ -773,6 +823,7 @@ impl<T> ClientEntry<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_floating(&self) -> bool {
         match self {
             ClientEntry::Floating(_) => true,
@@ -787,6 +838,7 @@ impl<T> ClientEntry<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_occupied(&self) -> bool {
         !self.is_vacant()
     }

@@ -40,8 +40,10 @@ pub struct WindowManager {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Direction {
-    Left(Option<usize>),
-    Right(Option<usize>),
+    West(usize),
+    East(usize),
+    North(usize),
+    South(usize),
 }
 
 enum MoveResizeInfo {
@@ -156,12 +158,12 @@ impl WindowManager {
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("Left", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen(Direction::Left(None)),
+            |wm, _| wm.rotate_virtual_screen(Direction::west()),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("Right", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen(Direction::Right(None)),
+            |wm, _| wm.rotate_virtual_screen(Direction::east()),
         ));
 
         self.add_keybind(KeyBinding::new(
@@ -171,22 +173,32 @@ impl WindowManager {
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("J", self.config.mod_key),
-            |wm, _| wm.focus_master_stack(),
+            |wm, _| wm.move_focus(Direction::south()),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("K", self.config.mod_key),
-            |wm, _| wm.focus_aux_stack(),
+            |wm, _| wm.move_focus(Direction::north()),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("H", self.config.mod_key),
+            |wm, _| wm.move_focus(Direction::west()),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("L", self.config.mod_key),
+            |wm, _| wm.move_focus(Direction::east()),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("J", self.config.mod_key | ShiftMask),
-            |wm, _| wm.rotate_virtual_screen(Direction::Left(None)),
+            |wm, _| wm.rotate_virtual_screen(Direction::west()),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("K", self.config.mod_key | ShiftMask),
-            |wm, _| wm.rotate_virtual_screen(Direction::Right(None)),
+            |wm, _| wm.rotate_virtual_screen(Direction::east()),
         ));
 
         self.xlib.init();
@@ -226,8 +238,8 @@ impl WindowManager {
         std::process::exit(0);
     }
 
-    fn kill_client(&mut self, event: &XKeyEvent) {
-        if let Some(client) = self.clients.get(&event.subwindow).into_option() {
+    fn kill_client(&mut self, _event: &XKeyEvent) {
+        if let Some(client) = self.clients.get_focused().into_option() {
             self.xlib.kill_client(client);
         }
     }
@@ -246,10 +258,13 @@ impl WindowManager {
         }
     }
 
-    fn handle_switch_stack(&mut self, event: &XKeyEvent) {
-        info!("Switching stack for window{:?}", event.subwindow);
-
-        self.clients.switch_stack_for_client(&event.subwindow);
+    fn handle_switch_stack(&mut self, _event: &XKeyEvent) {
+        if let Some(client) =
+            self.clients.get_focused().into_option().map(|c| c.key())
+        {
+            info!("Switching stack for window {:?}", client);
+            self.clients.switch_stack_for_client(&client);
+        }
 
         self.arrange_clients();
     }
@@ -266,12 +281,16 @@ impl WindowManager {
         self.last_rotation = Some(dir);
 
         match dir {
-            Direction::Left(n) => self.clients.rotate_left(n),
-            Direction::Right(n) => self.clients.rotate_right(n),
+            Direction::West(n) => self.clients.rotate_left(n),
+            Direction::East(n) => self.clients.rotate_right(n),
+            _ => {}
         }
 
         self.arrange_clients();
+        self.focus_any();
+    }
 
+    fn focus_any(&mut self) {
         // focus first client in all visible clients
         let to_focus =
             self.clients.iter_visible().next().map(|(k, _)| k).cloned();
@@ -282,10 +301,14 @@ impl WindowManager {
     }
 
     fn focus_master_stack(&mut self) {
+        let focused = self.clients.get_focused().into_option().map(|c| c.key());
+
         let k = self
             .clients
             .iter_master_stack()
             .map(|(k, _)| k)
+            // get the first client on the stack thats not already focused
+            .filter(|&&k| focused.map(|f| f != k).unwrap_or(true))
             .next()
             .cloned();
 
@@ -295,15 +318,71 @@ impl WindowManager {
     }
 
     fn focus_aux_stack(&mut self) {
+        let focused = self.clients.get_focused().into_option().map(|c| c.key());
+
         let k = self
             .clients
             .iter_aux_stack()
             .map(|(k, _)| k)
+            // get the first client on the stack thats not already focused
+            .filter(|&&k| focused.map(|f| f != k).unwrap_or(true))
             .next()
             .cloned();
 
         if let Some(k) = k {
             self.focus_client(&k, false);
+        }
+    }
+
+    fn focus_up(&mut self) {
+        let focused = self.clients.get_focused().into_option().map(|c| c.key());
+
+        let k = focused.and_then(|focused| {
+            self.clients
+                .get_stack_for_client(&focused)
+                .and_then(|stack| {
+                    stack
+                        .iter()
+                        .rev()
+                        .skip_while(|&&k| k != focused)
+                        .skip(1)
+                        .next()
+                        .cloned()
+                })
+        });
+
+        if let Some(k) = k {
+            self.focus_client(&k, false);
+        }
+    }
+
+    fn focus_down(&mut self) {
+        let focused = self.clients.get_focused().into_option().map(|c| c.key());
+
+        let k = focused.and_then(|focused| {
+            self.clients
+                .get_stack_for_client(&focused)
+                .and_then(|stack| {
+                    stack
+                        .iter()
+                        .skip_while(|&&k| k != focused)
+                        .skip(1)
+                        .next()
+                        .cloned()
+                })
+        });
+
+        if let Some(k) = k {
+            self.focus_client(&k, false);
+        }
+    }
+
+    fn move_focus(&mut self, dir: Direction) {
+        match dir {
+            Direction::East(_) => self.focus_aux_stack(),
+            Direction::West(_) => self.focus_master_stack(),
+            Direction::North(_) => self.focus_up(),
+            Direction::South(_) => self.focus_down(),
         }
     }
 
@@ -331,6 +410,10 @@ impl WindowManager {
         self.hide_hidden_clients();
 
         self.raise_floating_clients();
+
+        if self.clients.get_focused().is_vacant() {
+            self.focus_any();
+        }
     }
 
     fn focus_client<K>(&mut self, key: &K, try_raise: bool)
@@ -373,11 +456,11 @@ impl WindowManager {
         };
 
         self.clients.insert(client).unwrap();
+        self.arrange_clients();
+
         self.xlib.map_window(window);
 
         self.focus_client(&window, true);
-
-        self.arrange_clients();
     }
 
     fn map_request(&mut self, event: &XEvent) {
@@ -585,13 +668,33 @@ impl Default for WMConfig {
     }
 }
 
+impl Direction {
+    fn west() -> Self {
+        Direction::West(1)
+    }
+
+    fn east() -> Self {
+        Direction::East(1)
+    }
+
+    fn north() -> Self {
+        Direction::North(1)
+    }
+
+    fn south() -> Self {
+        Direction::South(1)
+    }
+}
+
 impl std::ops::Not for Direction {
     type Output = Self;
 
     fn not(self) -> Self::Output {
         match self {
-            Direction::Left(n) => Direction::Right(n),
-            Direction::Right(n) => Direction::Left(n),
+            Direction::West(n) => Direction::East(n),
+            Direction::East(n) => Direction::West(n),
+            Direction::North(n) => Direction::North(n),
+            Direction::South(n) => Direction::South(n),
         }
     }
 }
