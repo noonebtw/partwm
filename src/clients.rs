@@ -3,6 +3,7 @@
 use std::num::NonZeroI32;
 use std::{collections::HashMap, ops::Rem, usize};
 
+use indexmap::IndexMap;
 use log::{error, info};
 
 use crate::util::BuildIdentityHasher;
@@ -178,7 +179,7 @@ mod tests {
 
 use std::{collections::VecDeque, iter::repeat};
 
-type Clients = HashMap<u64, Client, BuildIdentityHasher>;
+type Clients = IndexMap<u64, Client, BuildIdentityHasher>;
 type ClientRef = u64;
 type ClientRefs = Vec<ClientRef>;
 
