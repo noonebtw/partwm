@@ -45,7 +45,7 @@ fn main() {
 
     log_prologue();
 
-    state::WindowManager::new(WMConfig::default()).init().run();
+    state::WindowManager::new(WMConfig::default()).run();
 }
 
 fn log_prologue() {

@@ -13,7 +13,7 @@ use xlib::{
 };
 
 use crate::{
-    clients::{Client, ClientKey, ClientState},
+    clients::{Client, ClientEntry, ClientKey, ClientState},
     xlib::KeyOrButton,
     xlib::XLib,
 };
@@ -40,8 +40,8 @@ pub struct WindowManager {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Direction {
-    Left,
-    Right,
+    Left(Option<usize>),
+    Right(Option<usize>),
 }
 
 enum MoveResizeInfo {
@@ -70,9 +70,12 @@ struct KeyBinding {
 
 impl WindowManager {
     pub fn new(config: WMConfig) -> Self {
-        let clients =
-            ClientState::with_virtualscreens(config.num_virtualscreens);
         let xlib = XLib::new();
+
+        let clients = ClientState::new()
+            .with_virtualscreens(config.num_virtualscreens)
+            .with_gap(config.gap.unwrap_or(1))
+            .with_screen_size(xlib.dimensions());
 
         Self {
             clients,
@@ -82,9 +85,10 @@ impl WindowManager {
             last_rotation: None,
             config,
         }
+        .init()
     }
 
-    pub fn init(mut self) -> Self {
+    fn init(mut self) -> Self {
         self.xlib.add_global_keybind(KeyOrButton::button(
             1,
             self.config.mod_key,
@@ -152,12 +156,12 @@ impl WindowManager {
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("Left", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen(Direction::Left),
+            |wm, _| wm.rotate_virtual_screen(Direction::Left(None)),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("Right", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen(Direction::Right),
+            |wm, _| wm.rotate_virtual_screen(Direction::Right(None)),
         ));
 
         self.add_keybind(KeyBinding::new(
@@ -177,12 +181,12 @@ impl WindowManager {
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("J", self.config.mod_key | ShiftMask),
-            |wm, _| wm.rotate_virtual_screen(Direction::Left),
+            |wm, _| wm.rotate_virtual_screen(Direction::Left(None)),
         ));
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("K", self.config.mod_key | ShiftMask),
-            |wm, _| wm.rotate_virtual_screen(Direction::Right),
+            |wm, _| wm.rotate_virtual_screen(Direction::Right(None)),
         ));
 
         self.xlib.init();
@@ -262,8 +266,8 @@ impl WindowManager {
         self.last_rotation = Some(dir);
 
         match dir {
-            Direction::Left => self.clients.rotate_left(),
-            Direction::Right => self.clients.rotate_right(),
+            Direction::Left(n) => self.clients.rotate_left(n),
+            Direction::Right(n) => self.clients.rotate_right(n),
         }
 
         self.arrange_clients();
@@ -273,7 +277,7 @@ impl WindowManager {
             self.clients.iter_visible().next().map(|(k, _)| k).cloned();
 
         if let Some(key) = to_focus {
-            self.focus_client(&key);
+            self.focus_client(&key, false);
         }
     }
 
@@ -286,7 +290,7 @@ impl WindowManager {
             .cloned();
 
         if let Some(k) = k {
-            self.focus_client(&k);
+            self.focus_client(&k, false);
         }
     }
 
@@ -299,7 +303,7 @@ impl WindowManager {
             .cloned();
 
         if let Some(k) = k {
-            self.focus_client(&k);
+            self.focus_client(&k, false);
         }
     }
 
@@ -320,10 +324,6 @@ impl WindowManager {
     }
 
     fn arrange_clients(&mut self) {
-        let (width, height) = self.xlib.dimensions();
-        self.clients
-            .arrange_virtual_screen(width, height, self.config.gap);
-
         self.clients
             .iter_visible()
             .for_each(|(_, c)| self.xlib.move_resize_client(c));
@@ -333,7 +333,7 @@ impl WindowManager {
         self.raise_floating_clients();
     }
 
-    fn focus_client<K>(&mut self, key: &K)
+    fn focus_client<K>(&mut self, key: &K, try_raise: bool)
     where
         K: ClientKey,
     {
@@ -343,12 +343,19 @@ impl WindowManager {
             self.xlib.unfocus_client(old);
         }
 
-        if let Some(new) = new.into_option() {
-            self.xlib.focus_client(new);
-            self.xlib.raise_client(new);
-        }
+        match new {
+            ClientEntry::Floating(new) => {
+                self.xlib.focus_client(new);
 
-        self.raise_floating_clients();
+                if try_raise {
+                    self.xlib.raise_client(new);
+                }
+            }
+            ClientEntry::Tiled(new) => {
+                self.xlib.focus_client(new);
+            }
+            _ => {}
+        }
     }
 
     fn new_client(&mut self, window: Window) {
@@ -368,7 +375,7 @@ impl WindowManager {
         self.clients.insert(client).unwrap();
         self.xlib.map_window(window);
 
-        self.focus_client(&window);
+        self.focus_client(&window, true);
 
         self.arrange_clients();
     }
@@ -377,15 +384,12 @@ impl WindowManager {
         let event: &XMapRequestEvent = event.as_ref();
 
         if !self.clients.contains(&event.window) {
-            info!("MapRequest: new client: {:?}", event.window);
-
             self.new_client(event.window);
         }
     }
 
     fn unmap_notify(&mut self, event: &XEvent) {
         let event: &XUnmapEvent = event.as_ref();
-        info!("unmap_notify: {:?}", event.window);
 
         self.clients.remove(&event.window);
 
@@ -394,7 +398,6 @@ impl WindowManager {
 
     fn destroy_notify(&mut self, event: &XEvent) {
         let event: &XDestroyWindowEvent = event.as_ref();
-        info!("destroy_notify: {:?}", event.window);
 
         self.clients.remove(&event.window);
 
@@ -413,7 +416,7 @@ impl WindowManager {
     fn enter_notify(&mut self, event: &XEvent) {
         let event: &XCrossingEvent = event.as_ref();
 
-        self.focus_client(&event.window);
+        self.focus_client(&event.window, false);
     }
 
     /// ensure event.subwindow refers to a valid client.
@@ -514,7 +517,7 @@ impl WindowManager {
     }
 
     fn button_press(&mut self, event: &XButtonPressedEvent) {
-        self.focus_client(&event.subwindow);
+        self.focus_client(&event.subwindow, true);
 
         match event.button {
             1 | 3 => match self.move_resize_window {
@@ -587,8 +590,8 @@ impl std::ops::Not for Direction {
 
     fn not(self) -> Self::Output {
         match self {
-            Direction::Left => Direction::Right,
-            Direction::Right => Direction::Left,
+            Direction::Left(n) => Direction::Right(n),
+            Direction::Right(n) => Direction::Left(n),
         }
     }
 }

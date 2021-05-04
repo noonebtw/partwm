@@ -216,12 +216,10 @@ impl XLib {
         }
 
         self.send_event(client, self.atoms.take_focus);
-
-        self.raise_client(client);
     }
 
     pub fn unfocus_client(&self, client: &Client) {
-        info!("unfocusing client: {:?}", client);
+        //info!("unfocusing client: {:?}", client);
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),

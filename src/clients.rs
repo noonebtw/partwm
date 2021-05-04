@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::num::NonZeroI32;
+use std::{collections::HashMap, ops::Rem, usize};
 
 use log::{error, info};
 
@@ -113,31 +113,6 @@ mod client {
             self.to_owned()
         }
     }
-
-    /*
-    impl Borrow<Window> for Client {
-    fn borrow(&self) -> &Window {
-    &self.window
-    }
-    }
-
-    impl ClientKey for Rc<Client> {
-    fn key(&self) -> u64 {
-    self.window
-    }
-    }
-    impl<'a> Borrow<dyn ClientKey + 'a> for Client {
-    fn borrow(&self) -> &(dyn ClientKey + 'a) {
-        self
-    }
-    }
-
-    impl<'a> Borrow<dyn ClientKey + 'a> for Rc<Client> {
-    fn borrow(&self) -> &(dyn ClientKey + 'a) {
-        self
-    }
-    }
-    */
 }
 
 pub use client::*;
@@ -218,56 +193,15 @@ pub enum ClientEntry<T> {
     Vacant,
 }
 
-impl<T> Into<Option<T>> for ClientEntry<T> {
-    fn into(self) -> Option<T> {
-        match self {
-            Self::Vacant => None,
-            Self::Tiled(client) | Self::Floating(client) => Some(client),
-        }
-    }
-}
-
-impl<T> ClientEntry<T> {
-    pub fn into_option(self) -> Option<T> {
-        self.into()
-    }
-
-    pub fn unwrap(self) -> T {
-        self.into_option().unwrap()
-    }
-
-    pub fn is_vacant(&self) -> bool {
-        match self {
-            ClientEntry::Vacant => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_floating(&self) -> bool {
-        match self {
-            ClientEntry::Floating(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_tiled(&self) -> bool {
-        match self {
-            ClientEntry::Tiled(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_occupied(&self) -> bool {
-        !self.is_vacant()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ClientState {
     pub(self) clients: Clients,
     pub(self) floating_clients: Clients,
     focused: Option<ClientRef>,
     pub(self) virtual_screens: VecDeque<VirtualScreen>,
+
+    gap: i32,
+    screen_size: (i32, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +220,8 @@ impl Default for ClientState {
             floating_clients: Default::default(),
             focused: None,
             virtual_screens: vss,
+            gap: 0,
+            screen_size: (1, 1),
         }
     }
 }
@@ -295,13 +231,24 @@ impl ClientState {
         Self::default()
     }
 
-    pub fn with_virtualscreens(num: usize) -> Self {
+    pub fn with_gap(self, gap: i32) -> Self {
+        Self { gap, ..self }
+    }
+
+    pub fn with_screen_size(self, screen_size: (i32, i32)) -> Self {
+        Self {
+            screen_size,
+            ..self
+        }
+    }
+
+    pub fn with_virtualscreens(self, num: usize) -> Self {
         let mut vss = VecDeque::<VirtualScreen>::new();
         vss.resize_with(num, Default::default);
 
         Self {
             virtual_screens: vss,
-            ..Default::default()
+            ..self
         }
     }
 
@@ -333,6 +280,9 @@ impl ClientState {
 
         self.focus_client(&key);
 
+        // adding a client changes the liling layout, rearrange
+        self.arrange_virtual_screen();
+
         // TODO: eventually make this function return a `ClientEntry` instead of an `Option`.
         self.get(&key).into_option()
     }
@@ -351,6 +301,9 @@ impl ClientState {
 
         self.clients.remove(&key.key());
         self.floating_clients.remove(&key.key());
+
+        // removing a client changes the liling layout, rearrange
+        self.arrange_virtual_screen();
     }
 
     pub fn contains<K>(&self, key: &K) -> bool
@@ -460,12 +413,18 @@ impl ClientState {
         }
     }
 
-    pub fn rotate_right(&mut self) {
-        self.virtual_screens.rotate_right(1);
+    pub fn rotate_right(&mut self, n: Option<usize>) {
+        self.virtual_screens
+            .rotate_right(n.unwrap_or(1).rem(self.virtual_screens.len()));
+
+        self.arrange_virtual_screen();
     }
 
-    pub fn rotate_left(&mut self) {
-        self.virtual_screens.rotate_left(1);
+    pub fn rotate_left(&mut self, n: Option<usize>) {
+        self.virtual_screens
+            .rotate_left(n.unwrap_or(1).rem(self.virtual_screens.len()));
+
+        self.arrange_virtual_screen();
     }
 
     /**
@@ -508,6 +467,7 @@ impl ClientState {
                     true => {
                         self.floating_clients.insert(key, floating_client);
                     }
+
                     false => {
                         self.clients.insert(key, floating_client);
                         if let Some(vs) = self.virtual_screens.front_mut() {
@@ -520,14 +480,22 @@ impl ClientState {
                 error!("wtf? Client was present in tiled and floating list.")
             }
         };
+
+        // we added or removed a client from the tiling so the layout changed, rearrange
+        self.arrange_virtual_screen();
     }
 
     fn remove_from_virtual_screens<K>(&mut self, key: &K)
     where
         K: ClientKey,
     {
-        if let Some(vs) = self.get_mut_virtualscreen_for_client(key) {
-            vs.remove(key);
+        if self.contains(key) {
+            if let Some(vs) = self.get_mut_virtualscreen_for_client(key) {
+                vs.remove(key);
+
+                // we removed a client so the layout changed, rearrange
+                self.arrange_virtual_screen();
+            }
         }
     }
 
@@ -578,7 +546,9 @@ impl ClientState {
                     if focused == key.key() {
                         (ClientEntry::Vacant, ClientEntry::Vacant)
                     } else {
-                        // focus the new client and return reference to it and the previously focused client.
+                        // focus the new client and return reference to it
+                        // and the previously focused client.
+
                         self.focused = Some(key.key());
                         (self.get(key), self.get(&focused))
                     }
@@ -599,7 +569,8 @@ impl ClientState {
     }
 
     /**
-    sets `self.focused` to `None` and returns a reference to the previously focused Client if any.
+    sets `self.focused` to `None` and returns a reference to
+    the previously focused Client if any.
     */
     pub fn unfocus(&mut self) -> ClientEntry<&Client> {
         match self.focused {
@@ -627,6 +598,8 @@ impl ClientState {
     {
         if let Some(vs) = self.get_mut_virtualscreen_for_client(key) {
             vs.switch_stack_for_client(key);
+
+            self.arrange_virtual_screen();
         }
     }
 
@@ -635,13 +608,9 @@ impl ClientState {
     screen width and screen height.
     Optionally adds a gap between windows `gap.unwrap_or(0)` pixels wide.
     */
-    pub fn arrange_virtual_screen(
-        &mut self,
-        width: i32,
-        height: i32,
-        gap: Option<i32>,
-    ) {
-        let gap = gap.unwrap_or(0);
+    pub fn arrange_virtual_screen(&mut self) {
+        let gap = self.gap;
+        let (width, height) = self.screen_size;
 
         // should be fine to unwrap since we will always have at least 1 virtual screen
         if let Some(vs) = self.virtual_screens.front_mut() {
@@ -692,7 +661,7 @@ impl ClientState {
             }
         }
 
-        info!("{:#?}", self);
+        //info!("{:#?}", self);
     }
 
     // Should have xlib send those changes back to the x server after this function
@@ -775,5 +744,49 @@ impl VirtualScreen {
         if self.master.is_empty() && !self.aux.is_empty() {
             self.master.extend(self.aux.drain(..1));
         }
+    }
+}
+
+impl<T> Into<Option<T>> for ClientEntry<T> {
+    fn into(self) -> Option<T> {
+        match self {
+            Self::Vacant => None,
+            Self::Tiled(client) | Self::Floating(client) => Some(client),
+        }
+    }
+}
+
+impl<T> ClientEntry<T> {
+    pub fn into_option(self) -> Option<T> {
+        self.into()
+    }
+
+    pub fn unwrap(self) -> T {
+        self.into_option().unwrap()
+    }
+
+    pub fn is_vacant(&self) -> bool {
+        match self {
+            ClientEntry::Vacant => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_floating(&self) -> bool {
+        match self {
+            ClientEntry::Floating(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_tiled(&self) -> bool {
+        match self {
+            ClientEntry::Tiled(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_occupied(&self) -> bool {
+        !self.is_vacant()
     }
 }
