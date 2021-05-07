@@ -157,21 +157,6 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Left", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen(Direction::west()),
-        ));
-
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Right", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen(Direction::east()),
-        ));
-
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Tab", self.config.mod_key),
-            |wm, _| wm.rotate_virtual_screen_back(),
-        ));
-
-        self.add_keybind(KeyBinding::new(
             self.xlib.make_key("J", self.config.mod_key),
             |wm, _| wm.move_focus(Direction::south()),
         ));
@@ -191,15 +176,25 @@ impl WindowManager {
             |wm, _| wm.move_focus(Direction::east()),
         ));
 
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("J", self.config.mod_key | ShiftMask),
-            |wm, _| wm.rotate_virtual_screen(Direction::west()),
-        ));
+        // resize master stack
 
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("K", self.config.mod_key | ShiftMask),
-            |wm, _| wm.rotate_virtual_screen(Direction::east()),
+            |wm, _| {
+                wm.clients.change_master_size(0.1);
+                wm.arrange_clients();
+            },
         ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("J", self.config.mod_key | ShiftMask),
+            |wm, _| {
+                wm.clients.change_master_size(-0.1);
+                wm.arrange_clients();
+            },
+        ));
+
+        self.add_vs_switch_keybinds();
 
         self.xlib.init();
 
@@ -209,6 +204,105 @@ impl WindowManager {
     fn add_keybind(&mut self, keybind: KeyBinding) {
         self.xlib.add_global_keybind(keybind.key);
         self.keybinds.push(keybind);
+    }
+
+    fn add_vs_switch_keybinds(&mut self) {
+        fn rotate_west<const N: usize>(wm: &mut WindowManager, _: &XKeyEvent) {
+            wm.rotate_virtual_screen(Direction::West(N));
+        }
+
+        fn rotate_east<const N: usize>(wm: &mut WindowManager, _: &XKeyEvent) {
+            wm.rotate_virtual_screen(Direction::East(N));
+        }
+
+        // Old keybinds
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Left", self.config.mod_key),
+            rotate_west::<1>,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("H", self.config.mod_key | ShiftMask),
+            rotate_west::<1>,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Right", self.config.mod_key),
+            rotate_east::<1>,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("L", self.config.mod_key | ShiftMask),
+            rotate_east::<1>,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Tab", self.config.mod_key),
+            |wm, _| wm.rotate_virtual_screen_back(),
+        ));
+
+        // Mod + (Shift) + Num
+
+        // Press Mod + `1` to move `1` virtual screen to the right
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("1", self.config.mod_key),
+            rotate_east::<1>,
+        ));
+
+        // Press Mod + Shift + `1` to move `1` virtual screen to the left
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("1", self.config.mod_key | ShiftMask),
+            rotate_west::<1>,
+        ));
+
+        // Press Mod + `2` to move `2` virtual screen to the right
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("2", self.config.mod_key),
+            rotate_east::<2>,
+        ));
+
+        // Press Mod + Shift + `2` to move `2` virtual screen to the left
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("2", self.config.mod_key | ShiftMask),
+            rotate_west::<2>,
+        ));
+
+        // Press Mod + `3` to move `3` virtual screen to the right
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("3", self.config.mod_key),
+            rotate_east::<3>,
+        ));
+
+        // Press Mod + Shift + `3` to move `3` virtual screen to the left
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("3", self.config.mod_key | ShiftMask),
+            rotate_west::<3>,
+        ));
+
+        // Press Mod + `4` to move `4` virtual screen to the right
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("4", self.config.mod_key),
+            rotate_east::<4>,
+        ));
+
+        // Press Mod + Shift + `4` to move `4` virtual screen to the left
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("4", self.config.mod_key | ShiftMask),
+            rotate_west::<4>,
+        ));
+
+        // Press Mod + `5` to move `5` virtual screen to the right
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("5", self.config.mod_key),
+            rotate_east::<5>,
+        ));
+
+        // Press Mod + Shift + `5` to move `5` virtual screen to the left
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("5", self.config.mod_key | ShiftMask),
+            rotate_west::<5>,
+        ));
     }
 
     pub fn run(mut self) -> ! {

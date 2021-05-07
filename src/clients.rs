@@ -117,66 +117,7 @@ mod client {
 
 pub use client::*;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn client_lists_test() {
-        let mut clients = ClientState::with_virtualscreens(3);
-
-        clients.insert(Client {
-            window: 1,
-            size: (1, 1),
-            position: (1, 1),
-            transient_for: None,
-        });
-
-        clients.insert(Client {
-            window: 2,
-            size: (1, 1),
-            position: (1, 1),
-            transient_for: None,
-        });
-
-        clients.arrange_virtual_screen(600, 400, None);
-
-        println!("{:#?}", clients);
-
-        clients
-            .iter_current_screen()
-            .for_each(|c| println!("{:?}", c));
-
-        clients.remove(&1u64);
-
-        clients.arrange_virtual_screen(600, 400, None);
-
-        println!("{:#?}", clients);
-
-        clients.rotate_right();
-
-        clients.insert(Client {
-            window: 3,
-            size: (1, 1),
-            position: (1, 1),
-            transient_for: None,
-        });
-
-        clients.arrange_virtual_screen(600, 400, None);
-
-        println!("{:#?}", clients);
-
-        clients.toggle_floating(&2u64);
-
-        clients.rotate_left();
-
-        clients.arrange_virtual_screen(600, 400, None);
-
-        println!("{:#?}", clients);
-    }
-}
-
-use std::{collections::VecDeque, iter::repeat};
+use std::collections::VecDeque;
 
 type Clients = IndexMap<u64, Client, BuildIdentityHasher>;
 type ClientRef = u64;
@@ -200,8 +141,9 @@ pub struct ClientState {
     focused: Option<ClientRef>,
     pub(self) virtual_screens: VecDeque<VirtualScreen>,
 
-    gap: i32,
-    screen_size: (i32, i32),
+    pub(self) gap: i32,
+    pub(self) screen_size: (i32, i32),
+    pub(self) master_size: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +164,7 @@ impl Default for ClientState {
             virtual_screens: vss,
             gap: 0,
             screen_size: (1, 1),
+            master_size: 1.0,
         }
     }
 }
@@ -666,7 +609,22 @@ impl ClientState {
         // should be fine to unwrap since we will always have at least 1 virtual screen
         if let Some(vs) = self.virtual_screens.front_mut() {
             // if aux is empty -> width : width / 2
-            let width = (width - gap * 2) / (1 + i32::from(!vs.aux.is_empty()));
+
+            let (master_width, aux_width) = {
+                let effective_width = width - gap * 2;
+
+                let master_size = if vs.aux.is_empty() {
+                    1.0
+                } else {
+                    self.master_size / 2.0
+                };
+
+                let master_width =
+                    (effective_width as f32 * master_size) as i32;
+                let aux_width = effective_width - master_width;
+
+                (master_width, aux_width)
+            };
 
             // make sure we dont devide by 0
             // height is max height / number of clients in the stack
@@ -683,24 +641,25 @@ impl ClientState {
                     None => 1,
                 };
 
-            // chaining master and aux together with `Zip`s for height and x
-            // reduces duplicate code
-            for ((i, key), (height, x)) in vs
-                .master
-                .iter()
-                .enumerate()
-                // add repeating height for each window and x pos for each window
-                .zip(repeat(master_height).zip(repeat(0i32)))
-                .chain(
-                    // same things for aux stack
-                    vs.aux
-                        .iter()
-                        .enumerate()
-                        .zip(repeat(aux_height).zip(repeat(width))),
-                )
-            {
-                let size = (width - gap * 2, height - gap * 2);
-                let position = (x + gap * 2, height * i as i32 + gap * 2);
+            // Master
+            for (i, key) in vs.master.iter().enumerate() {
+                let size = (master_width - gap * 2, master_height - gap * 2);
+                let position = (gap * 2, master_height * i as i32 + gap * 2);
+
+                if let Some(client) = self.clients.get_mut(key) {
+                    *client = Client {
+                        size,
+                        position,
+                        ..*client
+                    };
+                }
+            }
+
+            // Aux
+            for (i, key) in vs.aux.iter().enumerate() {
+                let size = (aux_width - gap * 2, aux_height - gap * 2);
+                let position =
+                    (master_width + gap * 2, aux_height * i as i32 + gap * 2);
 
                 if let Some(client) = self.clients.get_mut(key) {
                     *client = Client {
@@ -712,10 +671,15 @@ impl ClientState {
             }
         }
 
-        //info!("{:#?}", self);
+        // Should have xlib send those changes back to the x server after this function
     }
 
-    // Should have xlib send those changes back to the x server after this function
+    pub fn change_master_size(&mut self, delta: f32) {
+        let tmp = self.master_size + delta;
+        self.master_size = f32::min(1.8, f32::max(0.2, tmp));
+
+        self.arrange_virtual_screen();
+    }
 }
 
 impl Default for VirtualScreen {
