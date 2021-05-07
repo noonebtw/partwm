@@ -77,6 +77,7 @@ impl WindowManager {
         let clients = ClientState::new()
             .with_virtualscreens(config.num_virtualscreens)
             .with_gap(config.gap.unwrap_or(1))
+            .with_border(1)
             .with_screen_size(xlib.dimensions());
 
         Self {
@@ -549,6 +550,8 @@ impl WindowManager {
             Client::new_default(window)
         };
 
+        self.xlib
+            .configure_client(&client, self.clients.get_border());
         self.clients.insert(client).unwrap();
         self.arrange_clients();
 
@@ -585,7 +588,9 @@ impl WindowManager {
         let event: &XConfigureRequestEvent = event.as_ref();
 
         match self.clients.get(&event.window).into_option() {
-            Some(client) => self.xlib.configure_client(client),
+            Some(client) => self
+                .xlib
+                .configure_client(client, self.clients.get_border()),
             None => self.xlib.configure_window(event),
         }
     }

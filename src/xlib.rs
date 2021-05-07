@@ -212,6 +212,16 @@ impl XLib {
                 xlib::CurrentTime,
             );
 
+            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+
+            if let Some(screen) = screen {
+                xlib::XSetWindowBorder(
+                    self.dpy(),
+                    client.window,
+                    screen.white_pixel,
+                );
+            }
+
             xlib::XChangeProperty(
                 self.dpy(),
                 self.root,
@@ -227,7 +237,7 @@ impl XLib {
         self.send_event(client, self.atoms.take_focus);
     }
 
-    pub fn unfocus_client(&self, _client: &Client) {
+    pub fn unfocus_client(&self, client: &Client) {
         //info!("unfocusing client: {:?}", client);
 
         unsafe {
@@ -237,6 +247,16 @@ impl XLib {
                 xlib::RevertToPointerRoot,
                 xlib::CurrentTime,
             );
+
+            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+
+            if let Some(screen) = screen {
+                xlib::XSetWindowBorder(
+                    self.dpy(),
+                    client.window,
+                    screen.black_pixel,
+                );
+            }
 
             // xlib::XDeleteProperty(
             //     self.dpy(),
@@ -404,7 +424,7 @@ impl XLib {
         }
     }
 
-    pub fn configure_client(&self, client: &Client) {
+    pub fn configure_client(&self, client: &Client, border: i32) {
         let mut event = xlib::XConfigureEvent {
             type_: xlib::ConfigureNotify,
             display: self.dpy(),
@@ -414,7 +434,7 @@ impl XLib {
             y: client.position.1,
             width: client.size.0,
             height: client.size.1,
-            border_width: 0,
+            border_width: border,
             override_redirect: 0,
             send_event: 0,
             serial: 0,
@@ -422,6 +442,12 @@ impl XLib {
         };
 
         unsafe {
+            xlib::XSetWindowBorderWidth(
+                self.dpy(),
+                event.window,
+                event.border_width as u32,
+            );
+
             xlib::XSendEvent(
                 self.dpy(),
                 event.window,

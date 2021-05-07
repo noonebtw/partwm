@@ -64,6 +64,7 @@ fn log_prologue() {
 #[test]
 fn test_logger() {
     init_logger();
+    // asdf
 
     log_prologue();
 }

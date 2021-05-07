@@ -142,6 +142,7 @@ pub struct ClientState {
     pub(self) gap: i32,
     pub(self) screen_size: (i32, i32),
     pub(self) master_size: f32,
+    border_size: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +167,7 @@ impl Default for ClientState {
             gap: 0,
             screen_size: (1, 1),
             master_size: 1.0,
+            border_size: 0,
         }
     }
 }
@@ -177,6 +179,13 @@ impl ClientState {
 
     pub fn with_gap(self, gap: i32) -> Self {
         Self { gap, ..self }
+    }
+
+    pub fn with_border(self, border: i32) -> Self {
+        Self {
+            border_size: border,
+            ..self
+        }
     }
 
     pub fn with_screen_size(self, screen_size: (i32, i32)) -> Self {
@@ -191,6 +200,14 @@ impl ClientState {
             virtual_screens: VirtualScreenStore::new(num),
             ..self
         }
+    }
+
+    pub fn get_border(&self) -> i32 {
+        self.border_size
+    }
+
+    pub fn set_border_mut(&mut self, new: i32) {
+        self.border_size = new;
     }
 
     pub fn insert(&mut self, mut client: Client) -> Option<&Client> {
@@ -634,7 +651,11 @@ impl ClientState {
 
         // Master
         for (i, key) in vs.master.iter().enumerate() {
-            let size = (master_width - gap * 2, master_height - gap * 2);
+            let size = (
+                master_width - gap * 2 - self.border_size * 2,
+                master_height - gap * 2 - self.border_size * 2,
+            );
+
             let position = (gap * 2, master_height * i as i32 + gap * 2);
 
             if let Some(client) = self.clients.get_mut(key) {
@@ -648,7 +669,11 @@ impl ClientState {
 
         // Aux
         for (i, key) in vs.aux.iter().enumerate() {
-            let size = (aux_width - gap * 2, aux_height - gap * 2);
+            let size = (
+                aux_width - gap * 2 - self.border_size * 2,
+                aux_height - gap * 2 - self.border_size * 2,
+            );
+
             let position =
                 (master_width + gap * 2, aux_height * i as i32 + gap * 2);
 
