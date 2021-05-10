@@ -155,6 +155,7 @@ struct VirtualScreen {
 struct VirtualScreenStore {
     screens: Vec<VirtualScreen>,
     current_idx: usize,
+    last_idx: Option<usize>,
 }
 
 impl Default for ClientState {
@@ -274,6 +275,14 @@ impl ClientState {
         self.floating_clients.iter()
     }
 
+    pub fn iter_floating_visible(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
+        self.floating_clients
+            .iter()
+            .filter(move |&(k, _)| self.is_client_visible(k))
+    }
+
     fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.floating_clients.iter().chain(self.clients.iter())
     }
@@ -290,18 +299,6 @@ impl ClientState {
     pub fn iter_visible(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.iter_all_clients()
             .filter(move |&(k, _)| self.is_client_visible(k))
-    }
-
-    #[allow(dead_code)]
-    pub fn iter_visible_ordered(
-        &self,
-    ) -> impl Iterator<Item = (&u64, &Client)> {
-        self.iter_master_stack()
-            .chain(
-                self.iter_floating()
-                    .filter(move |&(k, _)| self.is_client_visible(k)),
-            )
-            .chain(self.iter_aux_stack())
     }
 
     #[allow(dead_code)]
@@ -380,6 +377,12 @@ impl ClientState {
         }
     }
 
+    pub fn go_to_nth_virtualscreen(&mut self, n: usize) {
+        self.virtual_screens.go_to_nth(n);
+
+        self.arrange_virtual_screen();
+    }
+
     pub fn rotate_right(&mut self, n: usize) {
         self.virtual_screens
             .rotate_right(n.rem(self.virtual_screens.len()));
@@ -390,6 +393,12 @@ impl ClientState {
     pub fn rotate_left(&mut self, n: usize) {
         self.virtual_screens
             .rotate_left(n.rem(self.virtual_screens.len()));
+
+        self.arrange_virtual_screen();
+    }
+
+    pub fn rotate_back(&mut self) {
+        self.virtual_screens.go_back();
 
         self.arrange_virtual_screen();
     }
@@ -785,6 +794,7 @@ impl VirtualScreenStore {
         Self {
             screens,
             current_idx: 0,
+            last_idx: None,
         }
     }
 
@@ -808,20 +818,42 @@ impl VirtualScreenStore {
         self.screens.iter_mut()
     }
 
-    fn rotate_left(&mut self, n: usize) {
-        let l = self.screens.len();
-        let a = n % l;
-        let b = self.current_idx % l;
-
-        self.current_idx = ((b + l) + a) % l;
+    fn go_back(&mut self) -> usize {
+        self.last_idx
+            .and_then(|n| Some(self.go_to_nth(n)))
+            .unwrap_or(self.current_idx)
     }
 
-    fn rotate_right(&mut self, n: usize) {
+    fn rotate_left(&mut self, n: usize) -> usize {
+        self.last_idx = Some(self.current_idx);
+
         let l = self.screens.len();
         let a = n % l;
         let b = self.current_idx % l;
 
         self.current_idx = ((b + l) - a) % l;
+
+        self.current_idx
+    }
+
+    fn rotate_right(&mut self, n: usize) -> usize {
+        self.last_idx = Some(self.current_idx);
+
+        let l = self.screens.len();
+        let a = n % l;
+        let b = self.current_idx % l;
+
+        self.current_idx = ((b + l) + a) % l;
+
+        self.current_idx
+    }
+
+    fn go_to_nth(&mut self, n: usize) -> usize {
+        self.last_idx = Some(self.current_idx);
+
+        self.current_idx = n % self.screens.len();
+
+        self.current_idx
     }
 }
 

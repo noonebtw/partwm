@@ -11,7 +11,7 @@ use x11::xlib::{
     Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen, XEvent,
     XGetTransientForHint, XGrabPointer, XInternAtom, XKillClient, XMapWindow,
     XOpenDisplay, XRaiseWindow, XRootWindow, XSetErrorHandler, XSync,
-    XUngrabButton, XUngrabKey, XUngrabPointer, XWarpPointer,
+    XUngrabButton, XUngrabKey, XUngrabPointer, XWarpPointer, XWindowAttributes,
 };
 use xlib::GrabModeAsync;
 
@@ -234,7 +234,7 @@ impl XLib {
             );
         }
 
-        self.send_event(client, self.atoms.take_focus);
+        self.send_protocol(client, self.atoms.take_focus);
     }
 
     pub fn unfocus_client(&self, client: &Client) {
@@ -391,6 +391,24 @@ impl XLib {
         }
     }
 
+    fn get_window_attributes(
+        &self,
+        window: Window,
+    ) -> Option<XWindowAttributes> {
+        let mut wa = unsafe {
+            std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
+                .assume_init()
+        };
+
+        if unsafe {
+            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0
+        } {
+            Some(wa)
+        } else {
+            None
+        }
+    }
+
     pub fn get_transient_for_window(&self, window: Window) -> Option<Window> {
         let mut transient_for: Window = 0;
 
@@ -400,6 +418,26 @@ impl XLib {
             Some(transient_for)
         } else {
             None
+        }
+    }
+
+    pub fn expose_client(&self, client: &Client) {
+        self.expose_window(client.window);
+    }
+
+    fn expose_window(&self, window: Window) {
+        if let Some(wa) = self.get_window_attributes(window) {
+            unsafe {
+                xlib::XClearArea(
+                    self.dpy(),
+                    window,
+                    0,
+                    0,
+                    wa.width as u32,
+                    wa.height as u32,
+                    1,
+                );
+            }
         }
     }
 
@@ -496,7 +534,7 @@ impl XLib {
     }
 
     pub fn kill_client(&self, client: &Client) {
-        if !self.send_event(client, self.atoms.delete_window) {
+        if !self.send_protocol(client, self.atoms.delete_window) {
             unsafe {
                 XKillClient(self.dpy(), client.window);
             }
@@ -565,7 +603,7 @@ impl XLib {
         return false;
     }
 
-    fn send_event(&self, client: &Client, proto: xlib::Atom) -> bool {
+    fn send_protocol(&self, client: &Client, proto: xlib::Atom) -> bool {
         if self.check_for_protocol(client, proto) {
             let mut data = xlib::ClientMessageData::default();
             data.set_long(0, proto as i64);

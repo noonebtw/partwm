@@ -8,6 +8,7 @@ use log4rs::{
 use state::WMConfig;
 
 mod clients;
+mod clients2;
 mod state;
 mod util;
 mod xlib;

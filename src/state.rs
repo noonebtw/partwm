@@ -34,7 +34,6 @@ pub struct WindowManager {
     keybinds: Vec<KeyBinding>,
     xlib: XLib,
 
-    last_rotation: Option<Direction>,
     config: WMConfig,
 }
 
@@ -85,7 +84,6 @@ impl WindowManager {
             move_resize_window: MoveResizeInfo::None,
             keybinds: Vec::new(),
             xlib,
-            last_rotation: None,
             config,
         }
         .init()
@@ -132,8 +130,31 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Print", 0),
+            |wm, _| wm.spawn("screenshot.sh", &[]),
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("Print", ShiftMask),
+            |wm, _| wm.spawn("screenshot.sh", &["-edit"]),
+        ));
+
+        self.add_keybind(KeyBinding::new(
             self.xlib.make_key("M", self.config.mod_key),
             Self::handle_switch_stack,
+        ));
+
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("F", self.config.mod_key),
+            |wm, _| {
+                wm.clients
+                    .get_focused()
+                    .into_option()
+                    .map(|c| c.key())
+                    .and_then(|k| Some(wm.clients.toggle_floating(&k)));
+
+                wm.arrange_clients();
+            },
         ));
 
         self.add_keybind(KeyBinding::new(
@@ -144,11 +165,6 @@ impl WindowManager {
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("Q", self.config.mod_key | ShiftMask),
             |wm, _| wm.quit(),
-        ));
-
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("T", self.config.mod_key),
-            |wm, _| wm.spawn("alacritty", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
@@ -216,6 +232,10 @@ impl WindowManager {
             wm.rotate_virtual_screen(Direction::East(N));
         }
 
+        fn goto_nth<const N: usize>(wm: &mut WindowManager, _: &XKeyEvent) {
+            wm.go_to_nth_virtual_screen(N)
+        }
+
         // Old keybinds
 
         self.add_keybind(KeyBinding::new(
@@ -243,66 +263,66 @@ impl WindowManager {
             |wm, _| wm.rotate_virtual_screen_back(),
         ));
 
-        // Mod + (Shift) + Num
+        // Mod + Num
 
-        // Press Mod + `1` to move `1` virtual screen to the right
+        // Press Mod + `1` to move go to the `1`th virtual screen
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("1", self.config.mod_key),
-            rotate_east::<1>,
+            goto_nth::<1>,
         ));
 
-        // Press Mod + Shift + `1` to move `1` virtual screen to the left
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("1", self.config.mod_key | ShiftMask),
-            rotate_west::<1>,
-        ));
-
-        // Press Mod + `2` to move `2` virtual screen to the right
+        // Press Mod + `2` to move go to the `2`th virtual screen
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("2", self.config.mod_key),
-            rotate_east::<2>,
+            goto_nth::<2>,
         ));
 
-        // Press Mod + Shift + `2` to move `2` virtual screen to the left
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("2", self.config.mod_key | ShiftMask),
-            rotate_west::<2>,
-        ));
-
-        // Press Mod + `3` to move `3` virtual screen to the right
+        // Press Mod + `3` to move go to the `3`th virtual screen
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("3", self.config.mod_key),
-            rotate_east::<3>,
+            goto_nth::<3>,
         ));
 
-        // Press Mod + Shift + `3` to move `3` virtual screen to the left
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("3", self.config.mod_key | ShiftMask),
-            rotate_west::<3>,
-        ));
-
-        // Press Mod + `4` to move `4` virtual screen to the right
+        // Press Mod + `4` to move go to the `4`th virtual screen
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("4", self.config.mod_key),
-            rotate_east::<4>,
+            goto_nth::<4>,
         ));
 
-        // Press Mod + Shift + `4` to move `4` virtual screen to the left
-        self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("4", self.config.mod_key | ShiftMask),
-            rotate_west::<4>,
-        ));
-
-        // Press Mod + `5` to move `5` virtual screen to the right
+        // Press Mod + `5` to move go to the `5`th virtual screen
         self.add_keybind(KeyBinding::new(
             self.xlib.make_key("5", self.config.mod_key),
-            rotate_east::<5>,
+            goto_nth::<5>,
         ));
 
-        // Press Mod + Shift + `5` to move `5` virtual screen to the left
+        // Press Mod + `6` to move go to the `6`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("5", self.config.mod_key | ShiftMask),
-            rotate_west::<5>,
+            self.xlib.make_key("6", self.config.mod_key),
+            goto_nth::<6>,
+        ));
+
+        // Press Mod + `7` to move go to the `7`th virtual screen
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("7", self.config.mod_key),
+            goto_nth::<7>,
+        ));
+
+        // Press Mod + `8` to move go to the `8`th virtual screen
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("8", self.config.mod_key),
+            goto_nth::<8>,
+        ));
+
+        // Press Mod + `9` to move go to the `9`th virtual screen
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("9", self.config.mod_key),
+            goto_nth::<9>,
+        ));
+
+        // Press Mod + `0` to move go to the `0`th virtual screen
+        self.add_keybind(KeyBinding::new(
+            self.xlib.make_key("0", self.config.mod_key),
+            goto_nth::<10>,
         ));
     }
 
@@ -365,15 +385,18 @@ impl WindowManager {
     }
 
     fn rotate_virtual_screen_back(&mut self) {
-        if let Some(dir) = self.last_rotation {
-            self.rotate_virtual_screen(!dir);
-        }
+        self.clients.rotate_back();
+
+        self.arrange_clients();
+    }
+
+    fn go_to_nth_virtual_screen(&mut self, n: usize) {
+        self.clients.go_to_nth_virtualscreen(n - 1);
+        self.arrange_clients();
     }
 
     fn rotate_virtual_screen(&mut self, dir: Direction) {
         info!("rotateing VS: {:?}", dir);
-
-        self.last_rotation = Some(dir);
 
         match dir {
             Direction::West(n) => self.clients.rotate_left(n),
@@ -382,7 +405,6 @@ impl WindowManager {
         }
 
         self.arrange_clients();
-        self.focus_any();
     }
 
     fn focus_any(&mut self) {
@@ -400,7 +422,8 @@ impl WindowManager {
 
         let k = self
             .clients
-            .iter_master_stack()
+            .iter_floating_visible()
+            .chain(self.clients.iter_master_stack())
             .map(|(k, _)| k)
             // get the first client on the stack thats not already focused
             .filter(|&&k| focused.map(|f| f != k).unwrap_or(true))
@@ -417,7 +440,8 @@ impl WindowManager {
 
         let k = self
             .clients
-            .iter_aux_stack()
+            .iter_floating_visible()
+            .chain(self.clients.iter_aux_stack())
             .map(|(k, _)| k)
             // get the first client on the stack thats not already focused
             .filter(|&&k| focused.map(|f| f != k).unwrap_or(true))
@@ -498,15 +522,21 @@ impl WindowManager {
     }
 
     fn arrange_clients(&mut self) {
-        self.clients
-            .iter_visible()
-            .for_each(|(_, c)| self.xlib.move_resize_client(c));
+        self.clients.iter_visible().for_each(|(_, c)| {
+            self.xlib.move_resize_client(c);
+            //self.xlib.expose_client(c);
+        });
 
         self.hide_hidden_clients();
 
         self.raise_floating_clients();
 
-        if self.clients.get_focused().is_vacant() {
+        // if no visible client is focused, focus any.
+        if !self
+            .clients
+            .iter_visible()
+            .any(|(k, _)| self.clients.is_focused(k))
+        {
             self.focus_any();
         }
     }
@@ -760,7 +790,7 @@ impl KeyBinding {
 impl Default for WMConfig {
     fn default() -> Self {
         Self {
-            num_virtualscreens: 5,
+            num_virtualscreens: 10,
             mod_key: Mod4Mask,
             gap: Some(2),
         }
