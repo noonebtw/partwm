@@ -11,7 +11,7 @@ pub struct Client<T> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Entry<T> {
+pub enum Entry<T> {
     Tiled(T),
     Floating(T),
     Transient(T),
@@ -22,7 +22,7 @@ enum Entry<T> {
 type ClientSet<T> = indexmap::IndexMap<T, Client<T>>;
 //type ClientSet<T> = std::collections::HashMap<T, Client<T>>;
 
-struct ClientStore<T>
+pub struct ClientStore<T>
 where
     T: Hash + Eq,
 {
@@ -89,6 +89,26 @@ impl<T> Client<T> {
     pub fn window_id_ref(&self) -> &T {
         &self.window_id
     }
+
+    /// Get a mutable reference to the client's size.
+    pub fn size_mut(&mut self) -> &mut (i32, i32) {
+        &mut self.size
+    }
+
+    /// Get a mutable reference to the client's position.
+    pub fn position_mut(&mut self) -> &mut (i32, i32) {
+        &mut self.position
+    }
+
+    /// Get a reference to the client's size.
+    pub fn size(&self) -> &(i32, i32) {
+        &self.size
+    }
+
+    /// Get a reference to the client's position.
+    pub fn position(&self) -> &(i32, i32) {
+        &self.position
+    }
 }
 
 impl<T> Client<T>
@@ -146,40 +166,40 @@ impl<T> From<Option<Entry<T>>> for Entry<T> {
 }
 
 impl<T> Entry<T> {
-    fn unwrap(self) -> T {
+    pub fn unwrap(self) -> T {
         Option::<T>::from(self).unwrap()
     }
 
-    fn unwrap_ref(&self) -> &T {
+    pub fn unwrap_ref(&self) -> &T {
         Option::<&T>::from(self).unwrap()
     }
 
-    fn unwrap_mut(&mut self) -> &mut T {
+    pub fn unwrap_mut(&mut self) -> &mut T {
         Option::<&mut T>::from(self).unwrap()
     }
 
-    fn is_floating(&self) -> bool {
+    pub fn is_floating(&self) -> bool {
         match self {
             Self::Floating(_) => true,
             _ => false,
         }
     }
 
-    fn is_tiled(&self) -> bool {
+    pub fn is_tiled(&self) -> bool {
         match self {
             Self::Tiled(_) => true,
             _ => false,
         }
     }
 
-    fn is_transient(&self) -> bool {
+    pub fn is_transient(&self) -> bool {
         match self {
             Self::Transient(_) => true,
             _ => false,
         }
     }
 
-    fn is_fullscreen(&self) -> bool {
+    pub fn is_fullscreen(&self) -> bool {
         match self {
             Self::Fullscreen(_) => true,
             _ => false,
@@ -205,11 +225,11 @@ impl<T> ClientStore<T>
 where
     T: Hash + Eq + Copy,
 {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    fn insert(&mut self, entry: Entry<Client<T>>) -> Entry<&Client<T>> {
+    pub fn insert(&mut self, entry: Entry<Client<T>>) -> Entry<&Client<T>> {
         if let Some(key) =
             Option::<&Client<T>>::from(&entry).map(|c| c.window_id())
         {
@@ -235,7 +255,7 @@ where
         }
     }
 
-    fn remove(&mut self, key: &T) -> Entry<Client<T>> {
+    pub fn remove(&mut self, key: &T) -> Entry<Client<T>> {
         if let Some(client) = self.tiled_clients.remove(key) {
             Entry::Tiled(client)
         } else if let Some(client) = self.floating_clients.remove(key) {
@@ -249,7 +269,7 @@ where
         }
     }
 
-    fn get(&self, key: &T) -> Entry<&Client<T>> {
+    pub fn get(&self, key: &T) -> Entry<&Client<T>> {
         if let Some(client) = self.tiled_clients.get(key) {
             Entry::Tiled(client)
         } else if let Some(client) = self.floating_clients.get(key) {
@@ -263,7 +283,7 @@ where
         }
     }
 
-    fn get_mut(&mut self, key: &T) -> Entry<&mut Client<T>> {
+    pub fn get_mut(&mut self, key: &T) -> Entry<&mut Client<T>> {
         if let Some(client) = self.tiled_clients.get_mut(key) {
             Entry::Tiled(client)
         } else if let Some(client) = self.floating_clients.get_mut(key) {
@@ -277,46 +297,48 @@ where
         }
     }
 
-    fn contains(&self, key: &T) -> bool {
+    pub fn contains(&self, key: &T) -> bool {
         self.tiled_clients.contains_key(key)
             || self.floating_clients.contains_key(key)
             || self.transient_clients.contains_key(key)
             || self.fullscreen_clients.contains_key(key)
     }
 
-    fn iter_tiled(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_tiled(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.tiled_clients.iter()
     }
 
-    fn iter_mut_tiled(&mut self) -> impl Iterator<Item = (&T, &mut Client<T>)> {
+    pub fn iter_mut_tiled(
+        &mut self,
+    ) -> impl Iterator<Item = (&T, &mut Client<T>)> {
         self.tiled_clients.iter_mut()
     }
 
-    fn iter_floating(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_floating(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.floating_clients.iter()
     }
 
-    fn iter_mut_floating(
+    pub fn iter_mut_floating(
         &mut self,
     ) -> impl Iterator<Item = (&T, &mut Client<T>)> {
         self.floating_clients.iter_mut()
     }
 
-    fn iter_transient(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_transient(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.transient_clients.iter()
     }
 
-    fn iter_mut_transient(
+    pub fn iter_mut_transient(
         &mut self,
     ) -> impl Iterator<Item = (&T, &mut Client<T>)> {
         self.transient_clients.iter_mut()
     }
 
-    fn iter_fullscreen(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_fullscreen(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.fullscreen_clients.iter()
     }
 
-    fn iter_mut_fullscreen(
+    pub fn iter_mut_fullscreen(
         &mut self,
     ) -> impl Iterator<Item = (&T, &mut Client<T>)> {
         self.fullscreen_clients.iter_mut()
