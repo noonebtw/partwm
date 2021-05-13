@@ -7,6 +7,10 @@ use log4rs::{
 };
 use state::WMConfig;
 
+#[macro_use]
+extern crate num_derive;
+
+mod backends;
 mod client_logic;
 mod clients;
 mod clients2;
