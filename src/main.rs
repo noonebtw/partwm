@@ -23,9 +23,11 @@ fn init_logger() {
         "{d(%Y-%m-%d %H:%M:%S %Z)(utc)} │ {({M}::{f}:{L}):>25} │ {h({l:>5})} │ {m}{n}",
     ));
 
-    let stdout = ConsoleAppender::builder().encoder(encoder.clone()).build();
+    let stdout =
+        ConsoleAppender::builder().encoder(encoder.clone()).build();
 
-    let home = dirs::home_dir().expect("Failed to get $HOME env var.");
+    let home =
+        dirs::home_dir().expect("Failed to get $HOME env var.");
 
     let _logfile = FileAppender::builder()
         .encoder(encoder)
@@ -33,7 +35,9 @@ fn init_logger() {
         .unwrap();
 
     let config = Config::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(
+            Appender::builder().build("stdout", Box::new(stdout)),
+        )
         //.appender(Appender::builder().build("logfile", Box::new(logfile)))
         .build(
             Root::builder()

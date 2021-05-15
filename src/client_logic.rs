@@ -185,7 +185,9 @@ where
             .map(move |&i| &self.workspaces[i])
     }
 
-    fn get_current_mut(&mut self) -> impl Iterator<Item = &mut Workspace<T>> {
+    fn get_current_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut Workspace<T>> {
         let current_indices = &self.current_indices;
 
         self.workspaces
@@ -217,7 +219,9 @@ where
             .flat_map(|w| w.aux.iter())
     }
 
-    fn iter_mut_current_master(&mut self) -> impl Iterator<Item = &mut T> {
+    fn iter_mut_current_master(
+        &mut self,
+    ) -> impl Iterator<Item = &mut T> {
         let current_indices = &self.current_indices;
 
         self.workspaces
@@ -228,7 +232,9 @@ where
             .flat_map(|w| w.master.iter_mut())
     }
 
-    fn iter_mut_current_aux(&mut self) -> impl Iterator<Item = &mut T> {
+    fn iter_mut_current_aux(
+        &mut self,
+    ) -> impl Iterator<Item = &mut T> {
         let current_indices = &self.current_indices;
 
         self.workspaces
@@ -243,7 +249,9 @@ where
         self.workspaces.iter()
     }
 
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut Workspace<T>> {
+    fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut Workspace<T>> {
         self.workspaces.iter_mut()
     }
 
@@ -270,13 +278,18 @@ where
     where
         Vec<usize>: From<I>,
     {
-        self.previous_indices =
-            Some(std::mem::replace(&mut self.current_indices, idx.into()));
+        self.previous_indices = Some(std::mem::replace(
+            &mut self.current_indices,
+            idx.into(),
+        ));
     }
 
     fn select_previous_workspaces(&mut self) {
         if let Some(previous_indices) = &mut self.previous_indices {
-            std::mem::swap(previous_indices, &mut self.current_indices);
+            std::mem::swap(
+                previous_indices,
+                &mut self.current_indices,
+            );
         }
     }
 
@@ -394,7 +407,8 @@ where
             (dimensions.0 - gap * 2, dimensions.1 - gap * 2)
         };
 
-        let len_master = self.workspaces.iter_current_master().count();
+        let len_master =
+            self.workspaces.iter_current_master().count();
         let len_aux = self.workspaces.iter_current_aux().count();
 
         let width_master = match len_aux {
@@ -412,18 +426,23 @@ where
             n => height / n as i32,
         };
 
-        for (i, id) in self.workspaces.iter_mut_current_master().enumerate() {
+        for (i, id) in
+            self.workspaces.iter_mut_current_master().enumerate()
+        {
             let size = (
                 width_master - gap * 2 - border * 2,
                 height_master - gap * 2 - border * 2,
             );
 
-            let position = (gap * 2, height_master * i as i32 + gap * 2);
+            let position =
+                (gap * 2, height_master * i as i32 + gap * 2);
 
             if let Some(client) =
                 Option::<&mut Client<T>>::from(self.store.get_mut(id))
             {
-                if *client.position() != position || *client.size() != size {
+                if *client.position() != position
+                    || *client.size() != size
+                {
                     *client.position_mut() = position;
                     *client.size_mut() = size;
 
@@ -432,19 +451,25 @@ where
             }
         }
 
-        for (i, id) in self.workspaces.iter_mut_current_aux().enumerate() {
+        for (i, id) in
+            self.workspaces.iter_mut_current_aux().enumerate()
+        {
             let size = (
                 width_aux - gap * 2 - border * 2,
                 height_aux - gap * 2 - border * 2,
             );
 
-            let position =
-                (width_master + gap * 2, height_aux * i as i32 + gap * 2);
+            let position = (
+                width_master + gap * 2,
+                height_aux * i as i32 + gap * 2,
+            );
 
             if let Some(client) =
                 Option::<&mut Client<T>>::from(self.store.get_mut(id))
             {
-                if *client.position() != position || *client.size() != size {
+                if *client.position() != position
+                    || *client.size() != size
+                {
                     *client.position_mut() = position;
                     *client.size_mut() = size;
 

@@ -4,14 +4,16 @@ use std::{ffi::CString, rc::Rc};
 
 use x11::xlib::{
     self, AnyButton, AnyKey, AnyModifier, Atom, ButtonPressMask,
-    ButtonReleaseMask, CWEventMask, ControlMask, CurrentTime, EnterWindowMask,
-    FocusChangeMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask,
-    Mod5Mask, PointerMotionMask, PropertyChangeMask, ShiftMask,
-    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask,
-    Window, XCloseDisplay, XConfigureRequestEvent, XDefaultScreen, XEvent,
-    XGetTransientForHint, XGrabPointer, XInternAtom, XKillClient, XMapWindow,
-    XOpenDisplay, XRaiseWindow, XRootWindow, XSetErrorHandler, XSync,
-    XUngrabButton, XUngrabKey, XUngrabPointer, XWarpPointer, XWindowAttributes,
+    ButtonReleaseMask, CWEventMask, ControlMask, CurrentTime,
+    EnterWindowMask, FocusChangeMask, LockMask, Mod1Mask, Mod2Mask,
+    Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask,
+    PropertyChangeMask, ShiftMask, StructureNotifyMask,
+    SubstructureNotifyMask, SubstructureRedirectMask, Window,
+    XCloseDisplay, XConfigureRequestEvent, XDefaultScreen, XEvent,
+    XGetTransientForHint, XGrabPointer, XInternAtom, XKillClient,
+    XMapWindow, XOpenDisplay, XRaiseWindow, XRootWindow,
+    XSetErrorHandler, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XWarpPointer, XWindowAttributes,
 };
 use xlib::GrabModeAsync;
 
@@ -45,7 +47,11 @@ impl KeyOrButton {
     pub fn key(keycode: i32, modmask: u32) -> Self {
         Self::Key(keycode, modmask)
     }
-    pub fn button(button: u32, modmask: u32, buttonmask: i64) -> Self {
+    pub fn button(
+        button: u32,
+        modmask: u32,
+        buttonmask: i64,
+    ) -> Self {
         Self::Button(button, modmask, buttonmask as u64)
     }
 }
@@ -78,9 +84,10 @@ impl XLib {
 
     pub fn init(&mut self) {
         unsafe {
-            let mut window_attributes =
-                std::mem::MaybeUninit::<xlib::XSetWindowAttributes>::zeroed()
-                    .assume_init();
+            let mut window_attributes = std::mem::MaybeUninit::<
+                xlib::XSetWindowAttributes,
+            >::zeroed()
+            .assume_init();
 
             window_attributes.event_mask = SubstructureRedirectMask
                 | StructureNotifyMask
@@ -117,7 +124,12 @@ impl XLib {
     #[allow(dead_code)]
     fn ungrab_global_keybings(&self, window: Window) {
         unsafe {
-            XUngrabButton(self.dpy(), AnyButton as u32, AnyModifier, window);
+            XUngrabButton(
+                self.dpy(),
+                AnyButton as u32,
+                AnyModifier,
+                window,
+            );
             XUngrabKey(self.dpy(), AnyKey, AnyModifier, window);
         }
     }
@@ -143,10 +155,14 @@ impl XLib {
     pub fn squash_event(&self, event_type: i32) -> XEvent {
         unsafe {
             let mut event =
-                std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
+                std::mem::MaybeUninit::<xlib::XEvent>::zeroed()
+                    .assume_init();
 
-            while xlib::XCheckTypedEvent(self.dpy(), event_type, &mut event)
-                != 0
+            while xlib::XCheckTypedEvent(
+                self.dpy(),
+                event_type,
+                &mut event,
+            ) != 0
             {}
 
             event
@@ -156,14 +172,19 @@ impl XLib {
     pub fn next_event(&self) -> XEvent {
         unsafe {
             let mut event =
-                std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
+                std::mem::MaybeUninit::<xlib::XEvent>::zeroed()
+                    .assume_init();
             xlib::XNextEvent(self.dpy(), &mut event);
 
             event
         }
     }
 
-    pub fn grab_key_or_button(&self, window: Window, key: &KeyOrButton) {
+    pub fn grab_key_or_button(
+        &self,
+        window: Window,
+        key: &KeyOrButton,
+    ) {
         let numlock_mask = self.get_numlock_mask();
         let modifiers =
             vec![0, LockMask, numlock_mask, LockMask | numlock_mask];
@@ -212,7 +233,8 @@ impl XLib {
                 xlib::CurrentTime,
             );
 
-            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+            let screen =
+                xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
 
             if let Some(screen) = screen {
                 xlib::XSetWindowBorder(
@@ -248,7 +270,8 @@ impl XLib {
                 xlib::CurrentTime,
             );
 
-            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+            let screen =
+                xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
 
             if let Some(screen) = screen {
                 xlib::XSetWindowBorder(
@@ -284,8 +307,10 @@ impl XLib {
                 xlib::XConfigureWindow(
                     self.dpy(),
                     client.window,
-                    (xlib::CWY | xlib::CWX | xlib::CWHeight | xlib::CWWidth)
-                        as u32,
+                    (xlib::CWY
+                        | xlib::CWX
+                        | xlib::CWHeight
+                        | xlib::CWWidth) as u32,
                     &mut windowchanges,
                 );
 
@@ -376,14 +401,18 @@ impl XLib {
         }
     }
 
-    pub fn get_window_size(&self, window: Window) -> Option<(i32, i32)> {
+    pub fn get_window_size(
+        &self,
+        window: Window,
+    ) -> Option<(i32, i32)> {
         let mut wa = unsafe {
             std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
                 .assume_init()
         };
 
         if unsafe {
-            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0
+            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa)
+                != 0
         } {
             Some((wa.width, wa.height))
         } else {
@@ -401,7 +430,8 @@ impl XLib {
         };
 
         if unsafe {
-            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0
+            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa)
+                != 0
         } {
             Some(wa)
         } else {
@@ -409,11 +439,18 @@ impl XLib {
         }
     }
 
-    pub fn get_transient_for_window(&self, window: Window) -> Option<Window> {
+    pub fn get_transient_for_window(
+        &self,
+        window: Window,
+    ) -> Option<Window> {
         let mut transient_for: Window = 0;
 
         if unsafe {
-            XGetTransientForHint(self.dpy(), window, &mut transient_for) != 0
+            XGetTransientForHint(
+                self.dpy(),
+                window,
+                &mut transient_for,
+            ) != 0
         } {
             Some(transient_for)
         } else {
@@ -515,13 +552,21 @@ impl XLib {
 
     pub fn dimensions(&self) -> (i32, i32) {
         unsafe {
-            let mut wa =
-                std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
-                    .assume_init();
+            let mut wa = std::mem::MaybeUninit::<
+                xlib::XWindowAttributes,
+            >::zeroed()
+            .assume_init();
 
-            xlib::XGetWindowAttributes(self.dpy(), self.root, &mut wa);
+            xlib::XGetWindowAttributes(
+                self.dpy(),
+                self.root,
+                &mut wa,
+            );
 
-            info!("Root window dimensions: {}, {}", wa.width, wa.height);
+            info!(
+                "Root window dimensions: {}, {}",
+                wa.width, wa.height
+            );
 
             (wa.width, wa.height)
         }
@@ -547,8 +592,9 @@ impl XLib {
                 self.dpy(),
                 self.root,
                 0,
-                (ButtonPressMask | ButtonReleaseMask | PointerMotionMask)
-                    as u32,
+                (ButtonPressMask
+                    | ButtonReleaseMask
+                    | PointerMotionMask) as u32,
                 GrabModeAsync,
                 GrabModeAsync,
                 0,
@@ -564,7 +610,11 @@ impl XLib {
         }
     }
 
-    pub fn move_cursor(&self, window: Option<Window>, position: (i32, i32)) {
+    pub fn move_cursor(
+        &self,
+        window: Option<Window>,
+        position: (i32, i32),
+    ) {
         unsafe {
             XWarpPointer(
                 self.dpy(),
@@ -580,7 +630,11 @@ impl XLib {
         }
     }
 
-    fn check_for_protocol(&self, client: &Client, proto: xlib::Atom) -> bool {
+    fn check_for_protocol(
+        &self,
+        client: &Client,
+        proto: xlib::Atom,
+    ) -> bool {
         let mut protos: *mut xlib::Atom = null_mut();
         let mut num_protos: i32 = 0;
 
@@ -603,7 +657,11 @@ impl XLib {
         return false;
     }
 
-    fn send_protocol(&self, client: &Client, proto: xlib::Atom) -> bool {
+    fn send_protocol(
+        &self,
+        client: &Client,
+        proto: xlib::Atom,
+    ) -> bool {
         if self.check_for_protocol(client, proto) {
             let mut data = xlib::ClientMessageData::default();
             data.set_long(0, proto as i64);
@@ -723,19 +781,37 @@ impl Atoms {
             Self {
                 protocols: {
                     let name = CString::new("WM_PROTOCOLS").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
+                    XInternAtom(
+                        display.get(),
+                        name.as_c_str().as_ptr(),
+                        0,
+                    )
                 },
                 delete_window: {
-                    let name = CString::new("WM_DELETE_WINDOW").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
+                    let name =
+                        CString::new("WM_DELETE_WINDOW").unwrap();
+                    XInternAtom(
+                        display.get(),
+                        name.as_c_str().as_ptr(),
+                        0,
+                    )
                 },
                 active_window: {
-                    let name = CString::new("WM_ACTIVE_WINDOW").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
+                    let name =
+                        CString::new("WM_ACTIVE_WINDOW").unwrap();
+                    XInternAtom(
+                        display.get(),
+                        name.as_c_str().as_ptr(),
+                        0,
+                    )
                 },
                 take_focus: {
                     let name = CString::new("WM_TAKE_FOCUS").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
+                    XInternAtom(
+                        display.get(),
+                        name.as_c_str().as_ptr(),
+                        0,
+                    )
                 },
             }
         }

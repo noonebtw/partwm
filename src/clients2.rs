@@ -47,7 +47,10 @@ impl<T> PartialOrd for Client<T>
 where
     T: PartialOrd,
 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<std::cmp::Ordering> {
         self.window_id.partial_cmp(&other.window_id)
     }
 }
@@ -229,7 +232,10 @@ where
         Self::default()
     }
 
-    pub fn insert(&mut self, entry: Entry<Client<T>>) -> Entry<&Client<T>> {
+    pub fn insert(
+        &mut self,
+        entry: Entry<Client<T>>,
+    ) -> Entry<&Client<T>> {
         if let Some(key) =
             Option::<&Client<T>>::from(&entry).map(|c| c.window_id())
         {
@@ -258,11 +264,16 @@ where
     pub fn remove(&mut self, key: &T) -> Entry<Client<T>> {
         if let Some(client) = self.tiled_clients.remove(key) {
             Entry::Tiled(client)
-        } else if let Some(client) = self.floating_clients.remove(key) {
+        } else if let Some(client) = self.floating_clients.remove(key)
+        {
             Entry::Floating(client)
-        } else if let Some(client) = self.transient_clients.remove(key) {
+        } else if let Some(client) =
+            self.transient_clients.remove(key)
+        {
             Entry::Transient(client)
-        } else if let Some(client) = self.fullscreen_clients.remove(key) {
+        } else if let Some(client) =
+            self.fullscreen_clients.remove(key)
+        {
             Entry::Fullscreen(client)
         } else {
             Entry::Vacant
@@ -276,7 +287,8 @@ where
             Entry::Floating(client)
         } else if let Some(client) = self.transient_clients.get(key) {
             Entry::Transient(client)
-        } else if let Some(client) = self.fullscreen_clients.get(key) {
+        } else if let Some(client) = self.fullscreen_clients.get(key)
+        {
             Entry::Fullscreen(client)
         } else {
             Entry::Vacant
@@ -286,11 +298,17 @@ where
     pub fn get_mut(&mut self, key: &T) -> Entry<&mut Client<T>> {
         if let Some(client) = self.tiled_clients.get_mut(key) {
             Entry::Tiled(client)
-        } else if let Some(client) = self.floating_clients.get_mut(key) {
+        } else if let Some(client) =
+            self.floating_clients.get_mut(key)
+        {
             Entry::Floating(client)
-        } else if let Some(client) = self.transient_clients.get_mut(key) {
+        } else if let Some(client) =
+            self.transient_clients.get_mut(key)
+        {
             Entry::Transient(client)
-        } else if let Some(client) = self.fullscreen_clients.get_mut(key) {
+        } else if let Some(client) =
+            self.fullscreen_clients.get_mut(key)
+        {
             Entry::Fullscreen(client)
         } else {
             Entry::Vacant
@@ -304,7 +322,9 @@ where
             || self.fullscreen_clients.contains_key(key)
     }
 
-    pub fn iter_tiled(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_tiled(
+        &self,
+    ) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.tiled_clients.iter()
     }
 
@@ -314,7 +334,9 @@ where
         self.tiled_clients.iter_mut()
     }
 
-    pub fn iter_floating(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_floating(
+        &self,
+    ) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.floating_clients.iter()
     }
 
@@ -324,7 +346,9 @@ where
         self.floating_clients.iter_mut()
     }
 
-    pub fn iter_transient(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_transient(
+        &self,
+    ) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.transient_clients.iter()
     }
 
@@ -334,7 +358,9 @@ where
         self.transient_clients.iter_mut()
     }
 
-    pub fn iter_fullscreen(&self) -> impl Iterator<Item = (&T, &Client<T>)> {
+    pub fn iter_fullscreen(
+        &self,
+    ) -> impl Iterator<Item = (&T, &Client<T>)> {
         self.fullscreen_clients.iter()
     }
 
@@ -372,7 +398,10 @@ mod tests {
             Entry::Tiled(client.clone()),
             client_store.remove(&client.borrow())
         );
-        assert_eq!(Entry::Vacant, client_store.remove(&client.borrow()));
+        assert_eq!(
+            Entry::Vacant,
+            client_store.remove(&client.borrow())
+        );
         assert_eq!(Entry::Vacant, client_store.remove(&1));
 
         assert!(client_store.contains(&client2.borrow()));

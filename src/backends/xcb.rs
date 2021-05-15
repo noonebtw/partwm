@@ -12,8 +12,8 @@ use x11rb::{
     errors::ReplyError,
     errors::ReplyOrIdError,
     protocol::xproto::{
-        Atom, ChangeWindowAttributesAux, ConnectionExt, EventMask, Screen,
-        Setup,
+        Atom, ChangeWindowAttributesAux, ConnectionExt, EventMask,
+        Screen, Setup,
     },
 };
 
@@ -41,9 +41,34 @@ mod tests {
             .enumerate()
         {
             println!(
-                "keycode: {:#x?}\tkeysyms: {:0x?}",
+                "keycode: {:#?}\tkeysyms: {:0x?}",
                 xcb.setup().min_keycode as usize + i,
                 keysyms
+            );
+        }
+    }
+
+    #[test]
+    fn modifier_masks() {
+        let xcb = create_backend().unwrap();
+
+        let mapping = xcb
+            .connection
+            .get_modifier_mapping()
+            .unwrap()
+            .reply()
+            .unwrap();
+
+        for (modifier_index, keycodes) in mapping
+            .keycodes
+            .chunks(mapping.keycodes_per_modifier() as usize)
+            .enumerate()
+        {
+            println!(
+                "Mod: {}[{:#x?}] keycodes: {:?}",
+                modifier_index,
+                1 << modifier_index,
+                keycodes
             );
         }
     }
@@ -205,24 +230,29 @@ impl Atoms {
     where
         C: Connection,
     {
-        let wm_protocols = connection.intern_atom(false, b"WM_PROTOCOLS")?;
+        let wm_protocols =
+            connection.intern_atom(false, b"WM_PROTOCOLS")?;
         let wm_state = connection.intern_atom(false, b"WM_STATE")?;
         let wm_delete_window =
             connection.intern_atom(false, b"WM_DELETE_WINDOW")?;
-        let wm_take_focus = connection.intern_atom(false, b"WM_TAKE_FOCUS")?;
-        let net_supported = connection.intern_atom(false, b"_NET_SUPPORTED")?;
+        let wm_take_focus =
+            connection.intern_atom(false, b"WM_TAKE_FOCUS")?;
+        let net_supported =
+            connection.intern_atom(false, b"_NET_SUPPORTED")?;
         let net_active_window =
             connection.intern_atom(false, b"_NET_ACTIVE_WINDOW")?;
         let net_client_list =
             connection.intern_atom(false, b"_NET_CLIENT_LIST")?;
-        let net_wm_name = connection.intern_atom(false, b"_NET_WM_NAME")?;
-        let net_wm_state = connection.intern_atom(false, b"_NET_WM_STATE")?;
-        let net_wm_state_fullscreen =
-            connection.intern_atom(false, b"_NET_WM_STATE_FULLSCREEN")?;
+        let net_wm_name =
+            connection.intern_atom(false, b"_NET_WM_NAME")?;
+        let net_wm_state =
+            connection.intern_atom(false, b"_NET_WM_STATE")?;
+        let net_wm_state_fullscreen = connection
+            .intern_atom(false, b"_NET_WM_STATE_FULLSCREEN")?;
         let net_wm_window_type =
             connection.intern_atom(false, b"_NET_WM_WINDOW_TYPE")?;
-        let net_wm_window_type_dialog =
-            connection.intern_atom(false, b"_NET_WM_WINDOW_TYPE_DIALOG")?;
+        let net_wm_window_type_dialog = connection
+            .intern_atom(false, b"_NET_WM_WINDOW_TYPE_DIALOG")?;
 
         Ok(Self {
             wm_protocols: wm_protocols.reply()?.atom,
@@ -234,9 +264,13 @@ impl Atoms {
             net_client_list: net_client_list.reply()?.atom,
             net_wm_name: net_wm_name.reply()?.atom,
             net_wm_state: net_wm_state.reply()?.atom,
-            net_wm_state_fullscreen: net_wm_state_fullscreen.reply()?.atom,
+            net_wm_state_fullscreen: net_wm_state_fullscreen
+                .reply()?
+                .atom,
             net_wm_window_type: net_wm_window_type.reply()?.atom,
-            net_wm_window_type_dialog: net_wm_window_type_dialog.reply()?.atom,
+            net_wm_window_type_dialog: net_wm_window_type_dialog
+                .reply()?
+                .atom,
         })
     }
 }
@@ -250,9 +284,10 @@ where
     atoms: Atoms,
 }
 
-pub fn create_backend(
-) -> Result<X11Backend<impl Connection + Send + Sync>, Box<dyn std::error::Error>>
-{
+pub fn create_backend() -> Result<
+    X11Backend<impl Connection + Send + Sync>,
+    Box<dyn std::error::Error>,
+> {
     let (connection, screen) = connect(None)?;
 
     Ok(X11Backend::new(Arc::new(connection), screen)?)
@@ -338,10 +373,14 @@ where
         }
     }
 
-    pub fn request_substructure_events(&self) -> Result<(), ReplyError> {
-        let attributes = ChangeWindowAttributesAux::default().event_mask(
-            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-        );
+    pub fn request_substructure_events(
+        &self,
+    ) -> Result<(), ReplyError> {
+        let attributes = ChangeWindowAttributesAux::default()
+            .event_mask(
+                EventMask::SUBSTRUCTURE_REDIRECT
+                    | EventMask::SUBSTRUCTURE_NOTIFY,
+            );
 
         match self
             .connection

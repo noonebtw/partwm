@@ -217,7 +217,8 @@ impl ClientState {
         if client.is_transient()
             && self.contains(&client.transient_for.unwrap())
         {
-            let transient = self.get(&client.transient_for.unwrap()).unwrap();
+            let transient =
+                self.get(&client.transient_for.unwrap()).unwrap();
 
             client.position = {
                 (
@@ -271,7 +272,9 @@ impl ClientState {
             || self.floating_clients.contains_key(&key)
     }
 
-    pub fn iter_floating(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_floating(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.floating_clients.iter()
     }
 
@@ -283,32 +286,44 @@ impl ClientState {
             .filter(move |&(k, _)| self.is_client_visible(k))
     }
 
-    fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    fn iter_all_clients(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.floating_clients.iter().chain(self.clients.iter())
     }
 
-    pub fn iter_hidden(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_hidden(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.iter_all_clients()
             .filter(move |&(k, _)| !self.is_client_visible(k))
     }
 
-    pub fn iter_transient(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_transient(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.iter_floating().filter(|&(_, c)| c.is_transient())
     }
 
-    pub fn iter_visible(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_visible(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.iter_all_clients()
             .filter(move |&(k, _)| self.is_client_visible(k))
     }
 
     #[allow(dead_code)]
-    pub fn iter_current_screen(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_current_screen(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.clients.iter().filter(move |&(k, _)| {
             self.virtual_screens.get_current().contains(k)
         })
     }
 
-    pub fn iter_master_stack(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_master_stack(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.virtual_screens
             .get_current()
             .master
@@ -316,7 +331,9 @@ impl ClientState {
             .map(move |k| (k, self.get(k).unwrap()))
     }
 
-    pub fn iter_aux_stack(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_aux_stack(
+        &self,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
         self.virtual_screens
             .get_current()
             .aux
@@ -441,12 +458,15 @@ impl ClientState {
                 // transient clients cannot be tiled
                 match floating_client.is_transient() {
                     true => {
-                        self.floating_clients.insert(key, floating_client);
+                        self.floating_clients
+                            .insert(key, floating_client);
                     }
 
                     false => {
                         self.clients.insert(key, floating_client);
-                        self.virtual_screens.get_mut_current().insert(&key);
+                        self.virtual_screens
+                            .get_mut_current()
+                            .insert(&key);
                     }
                 }
             }
@@ -464,7 +484,9 @@ impl ClientState {
         K: ClientKey,
     {
         if self.contains(key) {
-            if let Some(vs) = self.get_mut_virtualscreen_for_client(key) {
+            if let Some(vs) =
+                self.get_mut_virtualscreen_for_client(key)
+            {
                 vs.remove(key);
 
                 // we removed a client so the layout changed, rearrange
@@ -473,7 +495,10 @@ impl ClientState {
         }
     }
 
-    fn get_virtualscreen_for_client<K>(&self, key: &K) -> Option<&VirtualScreen>
+    fn get_virtualscreen_for_client<K>(
+        &self,
+        key: &K,
+    ) -> Option<&VirtualScreen>
     where
         K: ClientKey,
     {
@@ -502,7 +527,10 @@ impl ClientState {
         })
     }
 
-    pub fn get_stack_for_client<K>(&self, key: &K) -> Option<&Vec<u64>>
+    pub fn get_stack_for_client<K>(
+        &self,
+        key: &K,
+    ) -> Option<&Vec<u64>>
     where
         K: ClientKey,
     {
@@ -637,7 +665,8 @@ impl ClientState {
                 self.master_size / 2.0
             };
 
-            let master_width = (effective_width as f32 * master_size) as i32;
+            let master_width =
+                (effective_width as f32 * master_size) as i32;
             let aux_width = effective_width - master_width;
 
             (master_width, aux_width)
@@ -665,7 +694,8 @@ impl ClientState {
                 master_height - gap * 2 - self.border_size * 2,
             );
 
-            let position = (gap * 2, master_height * i as i32 + gap * 2);
+            let position =
+                (gap * 2, master_height * i as i32 + gap * 2);
 
             if let Some(client) = self.clients.get_mut(key) {
                 *client = Client {
@@ -683,8 +713,10 @@ impl ClientState {
                 aux_height - gap * 2 - self.border_size * 2,
             );
 
-            let position =
-                (master_width + gap * 2, aux_height * i as i32 + gap * 2);
+            let position = (
+                master_width + gap * 2,
+                aux_height * i as i32 + gap * 2,
+            );
 
             if let Some(client) = self.clients.get_mut(key) {
                 *client = Client {
@@ -720,7 +752,8 @@ impl VirtualScreen {
     where
         K: ClientKey,
     {
-        self.master.contains(&key.key()) || self.aux.contains(&key.key())
+        self.master.contains(&key.key())
+            || self.aux.contains(&key.key())
     }
 
     fn is_in_master<K>(&self, key: &K) -> bool
@@ -766,8 +799,11 @@ impl VirtualScreen {
                 self.aux.extend(self.master.drain(index..=index));
             }
             None => {
-                let index =
-                    self.aux.iter().position(|&k| k == key.key()).unwrap();
+                let index = self
+                    .aux
+                    .iter()
+                    .position(|&k| k == key.key())
+                    .unwrap();
                 self.master.extend(self.aux.drain(index..=index));
             }
         }
@@ -814,7 +850,9 @@ impl VirtualScreenStore {
         self.screens.iter()
     }
 
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut VirtualScreen> {
+    fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut VirtualScreen> {
         self.screens.iter_mut()
     }
 
@@ -861,7 +899,9 @@ impl<T> Into<Option<T>> for ClientEntry<T> {
     fn into(self) -> Option<T> {
         match self {
             Self::Vacant => None,
-            Self::Tiled(client) | Self::Floating(client) => Some(client),
+            Self::Tiled(client) | Self::Floating(client) => {
+                Some(client)
+            }
         }
     }
 }
