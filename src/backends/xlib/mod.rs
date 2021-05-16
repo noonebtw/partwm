@@ -4,29 +4,58 @@ pub mod keysym;
 use std::ptr::null;
 
 use x11::xlib::{
-    ButtonPress, ButtonRelease, ConfigureRequest, CreateNotify,
-    DestroyNotify, EnterNotify, KeyPress, KeyRelease, MapRequest,
-    MotionNotify, UnmapNotify, Window, XAnyEvent, XButtonEvent,
-    XConfigureRequestEvent, XCreateWindowEvent, XDestroyWindowEvent,
-    XEvent, XKeyEvent, XLookupKeysym, XMapRequestEvent, XMotionEvent,
-    XNextEvent, XRootWindow, XUnmapEvent,
+    AnyModifier, Atom, ButtonPress, ButtonPressMask, ButtonRelease,
+    ButtonReleaseMask, ClientMessage, ConfigureRequest, CreateNotify,
+    DestroyNotify, EnterWindowMask, FocusChangeMask, GrabModeAsync,
+    KeyPress, KeyPressMask, KeyRelease, KeyReleaseMask, MapNotify,
+    MapRequest, MotionNotify, PropertyChangeMask, PropertyNewValue,
+    PropertyNotify, StructureNotifyMask, UnmapNotify, Window,
+    XButtonEvent, XClientMessageEvent, XConfigureRequestEvent,
+    XConfigureWindow, XCreateWindowEvent, XDestroyWindowEvent,
+    XEvent, XGrabButton, XGrabKey, XInternAtom, XKeyEvent,
+    XKeysymToKeycode, XLookupKeysym, XMapRequestEvent, XMapWindow,
+    XMotionEvent, XNextEvent, XPropertyEvent, XRootWindow,
+    XSelectInput, XUnmapEvent, XWindowChanges,
 };
 
 use crate::backends::window_event::{
     ButtonEvent, KeyEvent, KeyState, ModifierKey,
 };
 
-use self::keysym::{keysym_to_virtual_keycode, xev_to_mouse_button};
-
-use super::window_event::{
-    ConfigureEvent, CreateEvent, DestroyEvent, MapEvent,
-    ModifierState, MotionEvent, UnmapEvent, WindowEvent,
+use self::keysym::{
+    keysym_to_virtual_keycode, mouse_button_to_xbutton,
+    virtual_keycode_to_keysym, xev_to_mouse_button,
 };
+
+use super::{
+    keycodes::{MouseButton, VirtualKeyCode},
+    window_event::{
+        ConfigureEvent, CreateEvent, DestroyEvent, FullscreenEvent,
+        MapEvent, ModifierState, MotionEvent, UnmapEvent,
+        WindowEvent,
+    },
+};
+
+struct Atoms {
+    wm_protocols: Atom,
+    wm_state: Atom,
+    wm_delete_window: Atom,
+    wm_take_focus: Atom,
+    net_supported: Atom,
+    net_active_window: Atom,
+    net_client_list: Atom,
+    net_wm_name: Atom,
+    net_wm_state: Atom,
+    net_wm_state_fullscreen: Atom,
+    net_wm_window_type: Atom,
+    net_wm_window_type_dialog: Atom,
+}
 
 // xlib backend
 pub struct XLib {
     display: *mut x11::xlib::Display,
     modifier_state: ModifierState,
+    atoms: Atoms,
     screen: i32,
 }
 
@@ -46,15 +75,97 @@ impl XLib {
 
             (display, screen)
         };
+
         Self {
             display,
             screen,
+            atoms: Self::init_atoms(display),
             modifier_state: Default::default(),
         }
     }
 
     fn root_window(&self) -> Window {
         unsafe { XRootWindow(self.display, self.screen) }
+    }
+
+    fn init_atoms(display: *mut x11::xlib::Display) -> Atoms {
+        unsafe {
+            let wm_protocols = XInternAtom(
+                display,
+                b"WM_PROTOCOLS\0".as_ptr() as *const _,
+                0,
+            );
+            let wm_state = XInternAtom(
+                display,
+                b"WM_STATE\0".as_ptr() as *const _,
+                0,
+            );
+            let wm_delete_window = XInternAtom(
+                display,
+                b"WM_DELETE_WINDOW\0".as_ptr() as *const _,
+                0,
+            );
+            let wm_take_focus = XInternAtom(
+                display,
+                b"WM_TAKE_FOCUS\0".as_ptr() as *const _,
+                0,
+            );
+            let net_supported = XInternAtom(
+                display,
+                b"_NET_SUPPORTED\0".as_ptr() as *const _,
+                0,
+            );
+            let net_active_window = XInternAtom(
+                display,
+                b"_NET_ACTIVE_WINDOW\0".as_ptr() as *const _,
+                0,
+            );
+            let net_client_list = XInternAtom(
+                display,
+                b"_NET_CLIENT_LIST\0".as_ptr() as *const _,
+                0,
+            );
+            let net_wm_name = XInternAtom(
+                display,
+                b"_NET_WM_NAME\0".as_ptr() as *const _,
+                0,
+            );
+            let net_wm_state = XInternAtom(
+                display,
+                b"_NET_WM_STATE\0".as_ptr() as *const _,
+                0,
+            );
+            let net_wm_state_fullscreen = XInternAtom(
+                display,
+                b"_NET_WM_STATE_FULLSCREEN\0".as_ptr() as *const _,
+                0,
+            );
+            let net_wm_window_type = XInternAtom(
+                display,
+                b"_NET_WM_WINDOW_TYPE\0".as_ptr() as *const _,
+                0,
+            );
+            let net_wm_window_type_dialog = XInternAtom(
+                display,
+                b"_NET_WM_WINDOW_TYPE_DIALOG\0".as_ptr() as *const _,
+                0,
+            );
+
+            Atoms {
+                wm_protocols,
+                wm_state,
+                wm_delete_window,
+                wm_take_focus,
+                net_supported,
+                net_active_window,
+                net_client_list,
+                net_wm_name,
+                net_wm_state,
+                net_wm_state_fullscreen,
+                net_wm_window_type,
+                net_wm_window_type_dialog,
+            }
+        }
     }
 
     fn update_modifier_state(
@@ -84,7 +195,7 @@ impl XLib {
                     self.modifier_state.set_modifier(modifier)
                 }
                 KeyRelease => {
-                    self.modifier_state.set_modifier(modifier)
+                    self.modifier_state.unset_modifier(modifier)
                 }
                 _ => unreachable!(
                     "keyyevent != (KeyPress | KeyRelease)"
@@ -105,6 +216,111 @@ impl XLib {
             XNextEvent(self.display, event.as_mut_ptr());
 
             event.assume_init()
+        }
+    }
+
+    /// should probabbly make this use some variable that the user can chose for selected events.
+    fn map_window(&self, window: Window) {
+        unsafe {
+            XMapWindow(self.display, window);
+
+            XSelectInput(
+                self.display,
+                window,
+                EnterWindowMask
+                    | FocusChangeMask
+                    | PropertyChangeMask
+                    | StructureNotifyMask,
+            );
+        }
+    }
+
+    fn select_input(&self, window: Window) {
+        unsafe {
+            XSelectInput(
+                self.display,
+                window,
+                EnterWindowMask
+                    | FocusChangeMask
+                    | PropertyChangeMask
+                    | StructureNotifyMask
+                    | ButtonPressMask
+                    | ButtonReleaseMask
+                    | KeyPressMask
+                    | KeyReleaseMask,
+            );
+        }
+    }
+
+    fn configure_window(
+        &self,
+        window: Window,
+        event: &ConfigureEvent,
+    ) {
+        unsafe {
+            let mut wc =
+                std::mem::MaybeUninit::<XWindowChanges>::zeroed()
+                    .assume_init();
+
+            wc.x = event.position[0];
+            wc.y = event.position[1];
+
+            wc.width = event.size[0];
+            wc.height = event.size[1];
+
+            XConfigureWindow(
+                self.display,
+                window,
+                (1 << 4) - 1,
+                &mut wc,
+            );
+        }
+    }
+
+    fn handle_window_event(&mut self, event: WindowEvent) {
+        match event {
+            WindowEvent::MapEvent { window, .. } => {
+                self.map_window(window);
+            }
+            WindowEvent::ConfigureEvent { window, event } => {
+                self.configure_window(window, &event);
+            }
+            _ => {}
+        }
+    }
+
+    fn grab_key(&self, keycode: VirtualKeyCode) {
+        unsafe {
+            XGrabKey(
+                self.display,
+                XKeysymToKeycode(
+                    self.display,
+                    virtual_keycode_to_keysym(keycode).unwrap()
+                        as u64,
+                ) as i32,
+                AnyModifier,
+                self.root_window(),
+                1,
+                GrabModeAsync,
+                GrabModeAsync,
+            );
+        }
+    }
+
+    fn grab_button(&self, button: MouseButton) {
+        unsafe {
+            XGrabButton(
+                self.display,
+                mouse_button_to_xbutton(button) as u32,
+                AnyModifier,
+                self.root_window(),
+                1,
+                (ButtonPressMask | ButtonReleaseMask) as u32,
+                GrabModeAsync,
+                GrabModeAsync,
+                0,
+                0,
+            );
         }
     }
 
@@ -178,6 +394,15 @@ impl XLib {
                         event: MapEvent::new(map_ev.window),
                     };
                 }
+                MapNotify => {
+                    // MapEvent
+                    let map_ev: &XMapRequestEvent = event.as_ref();
+
+                    return WindowEvent::MapEvent {
+                        window: map_ev.window,
+                        event: MapEvent::new(map_ev.window),
+                    };
+                }
                 UnmapNotify => {
                     // UnmapEvent
                     let unmap_ev: &XUnmapEvent = event.as_ref();
@@ -225,6 +450,25 @@ impl XLib {
                         ),
                     };
                 }
+                ClientMessage => {
+                    let msg_ev: &XClientMessageEvent = event.as_ref();
+
+                    // not sure?
+                }
+                PropertyNotify => {
+                    let property_ev: &XPropertyEvent = event.as_ref();
+
+                    if property_ev.atom
+                        == self.atoms.net_wm_state_fullscreen
+                    {
+                        return WindowEvent::FullscreenEvent {
+                            window: property_ev.window,
+                            event: FullscreenEvent::new(
+                                property_ev.state == PropertyNewValue,
+                            ),
+                        };
+                    }
+                }
                 _ => {}
             }
         }
@@ -233,7 +477,48 @@ impl XLib {
 
 #[cfg(test)]
 mod tests {
+    use x11::xlib::{
+        XBlackPixel, XCreateSimpleWindow, XCreateWindow,
+        XDefaultScreen,
+    };
+
     use super::*;
+
+    #[test]
+    fn window_events() {
+        let mut xlib = XLib::new();
+
+        //xlib.grab_key(VirtualKeyCode::A);
+
+        let window = unsafe {
+            //XCreateWindow(xlib.display, , 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+            let black_pixel = XBlackPixel(
+                xlib.display,
+                XDefaultScreen(xlib.display),
+            );
+            let window = XCreateSimpleWindow(
+                xlib.display,
+                xlib.root_window(),
+                10,
+                10,
+                100,
+                100,
+                1,
+                black_pixel,
+                black_pixel,
+            );
+
+            XMapWindow(xlib.display, window);
+            xlib.select_input(window);
+
+            window
+        };
+
+        loop {
+            let event = xlib.next_window_event();
+            println!("{:#?}", event);
+        }
+    }
 
     //#[test]
     // fn window_events() {

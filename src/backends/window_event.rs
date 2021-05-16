@@ -17,6 +17,10 @@ pub enum WindowEvent {
         window: Window,
         event: MotionEvent,
     },
+    MapRequestEvent {
+        window: Window,
+        event: MapEvent,
+    },
     MapEvent {
         window: Window,
         event: MapEvent,
@@ -41,7 +45,10 @@ pub enum WindowEvent {
         window: Window,
         event: ConfigureEvent,
     },
-    //1 { window: Window, event: 1 },
+    FullscreenEvent {
+        window: Window,
+        event: FullscreenEvent,
+    }, //1 { window: Window, event: 1 },
 }
 
 #[derive(Debug)]
@@ -200,9 +207,9 @@ impl CreateEvent {
 
 #[derive(Debug)]
 pub struct ConfigureEvent {
-    window: Window,
-    position: [i32; 2],
-    size: [i32; 2],
+    pub window: Window,
+    pub position: [i32; 2],
+    pub size: [i32; 2],
 }
 
 impl ConfigureEvent {
@@ -216,5 +223,16 @@ impl ConfigureEvent {
             position,
             size,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct FullscreenEvent {
+    new_fullscreen: bool,
+}
+
+impl FullscreenEvent {
+    pub fn new(new_fullscreen: bool) -> Self {
+        Self { new_fullscreen }
     }
 }
