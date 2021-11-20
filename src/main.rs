@@ -7,6 +7,7 @@ use log4rs::{
 };
 use state::WMConfig;
 
+mod backends;
 mod clients;
 //mod clients2;
 mod state;
