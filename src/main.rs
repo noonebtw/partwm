@@ -14,6 +14,24 @@ mod state;
 mod util;
 mod xlib;
 
+pub mod error {
+    use thiserror::Error;
+
+    #[derive(Debug, Error)]
+    pub enum Error {
+        #[error("placeholder error for Result<T> as Option<T>")]
+        NonError,
+        #[error("Unknown Event")]
+        UnknownEvent,
+        #[error(transparent)]
+        IoError(#[from] std::io::Error),
+        #[error(transparent)]
+        FmtError(#[from] std::fmt::Error),
+        #[error(transparent)]
+        XlibError(#[from] crate::backends::xlib::XlibError),
+    }
+}
+
 fn init_logger() {
     let encoder = Box::new(PatternEncoder::new(
         "{d(%Y-%m-%d %H:%M:%S %Z)(utc)} │ {({M}::{f}:{L}):>25} │ {h({l:>5})} │ {m}{n}",

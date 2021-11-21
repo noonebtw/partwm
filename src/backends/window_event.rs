@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use x11::xlib::Window;
+//use x11::xlib::Window;
 
 use super::keycodes::{MouseButton, VirtualKeyCode};
 
