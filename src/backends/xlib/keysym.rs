@@ -1,7 +1,8 @@
-use crate::backends::{
-    keycodes::{MouseButton, VirtualKeyCode},
-    window_event::ModifierKey,
-};
+use std::{borrow::Borrow, ops::Deref};
+
+use x11::xlib::XKeyReleasedEvent;
+
+use crate::backends::keycodes::{MouseButton, VirtualKeyCode};
 
 pub fn xev_to_mouse_button(
     button: &x11::xlib::XButtonEvent,
@@ -34,10 +35,42 @@ pub fn mouse_button_to_xbutton(button: MouseButton) -> i32 {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+pub struct XKeysym(u32);
+
+impl Borrow<u32> for XKeysym {
+    fn borrow(&self) -> &u32 {
+        &self.0
+    }
+}
+
+impl AsRef<u32> for XKeysym {
+    fn as_ref(&self) -> &u32 {
+        &self.0
+    }
+}
+
+impl Deref for XKeysym {
+    type Target = u32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<XKeysym> for VirtualKeyCode {
+    fn from(value: XKeysym) -> Self {
+        keysym_to_virtual_keycode(*value).unwrap()
+    }
+}
+impl From<VirtualKeyCode> for XKeysym {
+    fn from(value: VirtualKeyCode) -> Self {
+        Self(virtual_keycode_to_keysym(value).unwrap())
+    }
+}
+
 /// from winit
-pub fn keysym_to_virtual_keycode(
-    keysym: u32,
-) -> Option<VirtualKeyCode> {
+pub fn keysym_to_virtual_keycode(keysym: u32) -> Option<VirtualKeyCode> {
     Some(match keysym {
         x11::keysym::XK_BackSpace => VirtualKeyCode::Back,
         x11::keysym::XK_Tab => VirtualKeyCode::Tab,
@@ -1034,9 +1067,7 @@ pub fn keysym_to_virtual_keycode(
         //x11::keysym::XK_hebrew_taf => VirtualKeyCode::Hebrew_taf,
         //x11::keysym::XK_Hebrew_switch => VirtualKeyCode::Hebrew_switch,
         x11::keysym::XF86XK_Back => VirtualKeyCode::NavigateBackward,
-        x11::keysym::XF86XK_Forward => {
-            VirtualKeyCode::NavigateForward
-        }
+        x11::keysym::XF86XK_Forward => VirtualKeyCode::NavigateForward,
         x11::keysym::XF86XK_Copy => VirtualKeyCode::Copy,
         x11::keysym::XF86XK_Paste => VirtualKeyCode::Paste,
         x11::keysym::XF86XK_Cut => VirtualKeyCode::Cut,
@@ -1044,9 +1075,7 @@ pub fn keysym_to_virtual_keycode(
     })
 }
 
-pub fn virtual_keycode_to_keysym(
-    keycode: VirtualKeyCode,
-) -> Option<u32> {
+pub fn virtual_keycode_to_keysym(keycode: VirtualKeyCode) -> Option<u32> {
     Some(match keycode {
         VirtualKeyCode::Back => x11::keysym::XK_BackSpace,
         VirtualKeyCode::Tab => x11::keysym::XK_Tab,
@@ -2043,12 +2072,28 @@ pub fn virtual_keycode_to_keysym(
         //VirtualKeyCode::Hebrew_taf => x11::keysym::XK_hebrew_taf,
         //VirtualKeyCode::Hebrew_switch => x11::keysym::XK_Hebrew_switch,
         VirtualKeyCode::NavigateBackward => x11::keysym::XF86XK_Back,
-        VirtualKeyCode::NavigateForward => {
-            x11::keysym::XF86XK_Forward
-        }
+        VirtualKeyCode::NavigateForward => x11::keysym::XF86XK_Forward,
         VirtualKeyCode::Copy => x11::keysym::XF86XK_Copy,
         VirtualKeyCode::Paste => x11::keysym::XF86XK_Paste,
         VirtualKeyCode::Cut => x11::keysym::XF86XK_Cut,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keysym_to_vkc() {
+        let keysym: XKeysym = VirtualKeyCode::W.into();
+        let keycode: VirtualKeyCode = keysym.into();
+
+        assert_eq!(keycode, VirtualKeyCode::W);
+
+        let keysym2: XKeysym = keycode.into();
+
+        assert_eq!(keysym2, keysym);
+        assert_eq!(&x11::keysym::XK_W, keysym.as_ref());
+    }
 }

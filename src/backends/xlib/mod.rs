@@ -1,6 +1,5 @@
 use log::{error, warn};
 use std::{
-    borrow::Borrow,
     convert::{TryFrom, TryInto},
     ffi::CString,
     rc::Rc,
@@ -9,7 +8,16 @@ use thiserror::Error;
 
 use x11::xlib::{self, Atom, Window, XEvent, XInternAtom};
 
-use super::{window_event::WindowEvent, WindowServerBackend};
+use self::keysym::xev_to_mouse_button;
+
+use super::{
+    keycodes::{MouseButton, VirtualKeyCode},
+    window_event::{
+        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyState,
+        MapEvent, ModifierState, UnmapEvent, WindowEvent,
+    },
+    WindowServerBackend,
+};
 
 pub mod keysym;
 
@@ -142,29 +150,69 @@ impl XLib {
     }
 }
 
-impl TryFrom<XEvent> for WindowEvent {
+impl TryFrom<XEvent> for WindowEvent<xlib::Window> {
     type Error = crate::error::Error;
 
     fn try_from(event: XEvent) -> Result<Self, Self::Error> {
         match event.get_type() {
-            xlib::MapRequest => Ok(Self::MapRequestEvent {
-                window: event.map_request.window,
-                event: todo!(),
-            }),
+            xlib::MapRequest => {
+                let ev = unsafe { &event.map_request };
+                Ok(Self::MapRequestEvent(MapEvent { window: ev.window }))
+            }
+            xlib::UnmapNotify => {
+                let ev = unsafe { &event.unmap };
+                Ok(Self::UnmapEvent(UnmapEvent { window: ev.window }))
+            }
+            xlib::ConfigureRequest => {
+                let ev = unsafe { &event.configure_request };
+                Ok(Self::ConfigureEvent(ConfigureEvent {
+                    window: ev.window,
+                    position: [ev.x, ev.y],
+                    size: [ev.width, ev.height],
+                }))
+            }
+            xlib::EnterNotify => {
+                let ev = unsafe { &event.crossing };
+                Ok(Self::EnterEvent(EnterEvent { window: ev.window }))
+            }
+            xlib::DestroyNotify => {
+                let ev = unsafe { &event.destroy_window };
+                Ok(Self::DestroyEvent(DestroyEvent { window: ev.window }))
+            }
+            xlib::ButtonPress | xlib::ButtonRelease => {
+                let ev = unsafe { &event.button };
+                let keycode = xev_to_mouse_button(ev).unwrap();
+                let state = if ev.state as i32 == xlib::ButtonPress {
+                    KeyState::Pressed
+                } else {
+                    KeyState::Released
+                };
+
+                let modifierstate = ModifierState::new();
+
+                Ok(Self::ButtonEvent(ButtonEvent::new(
+                    ev.window,
+                    state,
+                    keycode,
+                    modifierstate,
+                )))
+            }
             _ => Err(Self::Error::UnknownEvent),
         }
     }
 }
 
 impl WindowServerBackend for XLib {
-    fn next_event(&self) -> super::window_event::WindowEvent {
+    type Window = xlib::Window;
+
+    fn next_event(&self) -> super::window_event::WindowEvent<Self::Window> {
         self.next_xevent().try_into().unwrap()
     }
 
     fn add_keybind(
         &mut self,
         keybind: super::window_event::KeyBind,
-        window: Option<u64>,
+        window: Option<Self::Window>,
     ) {
         todo!()
     }
@@ -172,7 +220,7 @@ impl WindowServerBackend for XLib {
     fn remove_keybind(
         &mut self,
         keybind: super::window_event::KeyBind,
-        window: Option<u64>,
+        window: Option<Self::Window>,
     ) {
         todo!()
     }
@@ -180,7 +228,7 @@ impl WindowServerBackend for XLib {
     fn add_mousebind(
         &mut self,
         keybind: super::window_event::KeyBind,
-        window: Option<u64>,
+        window: Option<Self::Window>,
     ) {
         todo!()
     }
@@ -188,28 +236,28 @@ impl WindowServerBackend for XLib {
     fn remove_mousebind(
         &mut self,
         keybind: super::window_event::KeyBind,
-        window: Option<u64>,
+        window: Option<Self::Window>,
     ) {
         todo!()
     }
 
-    fn focus_window(&self, window: u64) {
+    fn focus_window(&self, window: Self::Window) {
         todo!()
     }
 
-    fn unfocus_window(&self, window: u64) {
+    fn unfocus_window(&self, window: Self::Window) {
         todo!()
     }
 
-    fn move_window(&self, window: u64, pos: i32) {
+    fn move_window(&self, window: Self::Window, pos: i32) {
         todo!()
     }
 
-    fn resize_window(&self, window: u64, pos: i32) {
+    fn resize_window(&self, window: Self::Window, pos: i32) {
         todo!()
     }
 
-    fn hide_window(&self, window: u64) {
+    fn hide_window(&self, window: Self::Window) {
         todo!()
     }
 
@@ -217,7 +265,7 @@ impl WindowServerBackend for XLib {
         todo!()
     }
 
-    fn kill_window(&self, window: u64) {
+    fn kill_window(&self, window: Self::Window) {
         todo!()
     }
 }

@@ -23,6 +23,8 @@ pub mod error {
         NonError,
         #[error("Unknown Event")]
         UnknownEvent,
+        #[error("Unhandled VirtualKeyCode")]
+        UnhandledVirtualKeyCode,
         #[error(transparent)]
         IoError(#[from] std::io::Error),
         #[error(transparent)]

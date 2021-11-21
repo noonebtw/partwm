@@ -4,51 +4,18 @@
 use super::keycodes::{MouseButton, VirtualKeyCode};
 
 #[derive(Debug)]
-pub enum WindowEvent {
-    KeyEvent {
-        window: Window,
-        event: KeyEvent,
-    },
-    ButtonEvent {
-        window: Window,
-        event: ButtonEvent,
-    },
-    MotionEvent {
-        window: Window,
-        event: MotionEvent,
-    },
-    MapRequestEvent {
-        window: Window,
-        event: MapEvent,
-    },
-    MapEvent {
-        window: Window,
-        event: MapEvent,
-    },
-    UnmapEvent {
-        window: Window,
-        event: UnmapEvent,
-    },
-    CreateEvent {
-        window: Window,
-        event: CreateEvent,
-    },
-    DestroyEvent {
-        window: Window,
-        event: DestroyEvent,
-    },
-    EnterEvent {
-        window: Window,
-        event: EnterEvent,
-    },
-    ConfigureEvent {
-        window: Window,
-        event: ConfigureEvent,
-    },
-    FullscreenEvent {
-        window: Window,
-        event: FullscreenEvent,
-    }, //1 { window: Window, event: 1 },
+pub enum WindowEvent<Window> {
+    KeyEvent(KeyEvent<Window>),
+    ButtonEvent(ButtonEvent<Window>),
+    MotionEvent(MotionEvent<Window>),
+    MapRequestEvent(MapEvent<Window>),
+    MapEvent(MapEvent<Window>),
+    UnmapEvent(UnmapEvent<Window>),
+    CreateEvent(CreateEvent<Window>),
+    DestroyEvent(DestroyEvent<Window>),
+    EnterEvent(EnterEvent<Window>),
+    ConfigureEvent(ConfigureEvent<Window>),
+    FullscreenEvent(FullscreenEvent<Window>), //1 { window: Window, event: 1 },
 }
 
 #[derive(Debug)]
@@ -94,19 +61,22 @@ impl ModifierState {
 }
 
 #[derive(Debug)]
-pub struct KeyEvent {
+pub struct KeyEvent<Window> {
+    pub window: Window,
     pub state: KeyState,
     pub keycode: VirtualKeyCode,
     pub modifierstate: ModifierState,
 }
 
-impl KeyEvent {
+impl<Window> KeyEvent<Window> {
     pub fn new(
+        window: Window,
         state: KeyState,
         keycode: VirtualKeyCode,
         modifierstate: ModifierState,
     ) -> Self {
         Self {
+            window,
             state,
             keycode,
             modifierstate,
@@ -115,19 +85,22 @@ impl KeyEvent {
 }
 
 #[derive(Debug)]
-pub struct ButtonEvent {
+pub struct ButtonEvent<Window> {
+    pub window: Window,
     pub state: KeyState,
     pub keycode: MouseButton,
     pub modifierstate: ModifierState,
 }
 
-impl ButtonEvent {
+impl<Window> ButtonEvent<Window> {
     pub fn new(
+        window: Window,
         state: KeyState,
         keycode: MouseButton,
         modifierstate: ModifierState,
     ) -> Self {
         Self {
+            window,
             state,
             keycode,
             modifierstate,
@@ -136,60 +109,51 @@ impl ButtonEvent {
 }
 
 #[derive(Debug)]
-pub struct MotionEvent {
+pub struct MotionEvent<Window> {
     pub position: [i32; 2],
+    pub window: Window,
 }
 
-impl MotionEvent {
-    pub fn new(position: [i32; 2]) -> Self {
-        Self { position }
+impl<Window> MotionEvent<Window> {
+    pub fn new(position: [i32; 2], window: Window) -> Self {
+        Self { position, window }
     }
 }
 
 #[derive(Debug)]
-pub struct MapEvent {
+pub struct MapEvent<Window> {
     pub window: Window,
 }
 
-impl MapEvent {
+#[derive(Debug)]
+pub struct UnmapEvent<Window> {
+    pub window: Window,
+}
+
+#[derive(Debug)]
+pub struct EnterEvent<Window> {
+    pub window: Window,
+}
+
+#[derive(Debug)]
+pub struct DestroyEvent<Window> {
+    pub window: Window,
+}
+
+impl<Window> DestroyEvent<Window> {
     pub fn new(window: Window) -> Self {
         Self { window }
     }
 }
 
 #[derive(Debug)]
-pub struct UnmapEvent {
-    pub window: Window,
-}
-
-impl UnmapEvent {
-    pub fn new(window: Window) -> Self {
-        Self { window }
-    }
-}
-
-#[derive(Debug)]
-pub struct EnterEvent {}
-
-#[derive(Debug)]
-pub struct DestroyEvent {
-    pub window: Window,
-}
-
-impl DestroyEvent {
-    pub fn new(window: Window) -> Self {
-        Self { window }
-    }
-}
-
-#[derive(Debug)]
-pub struct CreateEvent {
+pub struct CreateEvent<Window> {
     pub window: Window,
     pub position: [i32; 2],
     pub size: [i32; 2],
 }
 
-impl CreateEvent {
+impl<Window> CreateEvent<Window> {
     pub fn new(window: Window, position: [i32; 2], size: [i32; 2]) -> Self {
         Self {
             window,
@@ -200,13 +164,13 @@ impl CreateEvent {
 }
 
 #[derive(Debug)]
-pub struct ConfigureEvent {
+pub struct ConfigureEvent<Window> {
     pub window: Window,
     pub position: [i32; 2],
     pub size: [i32; 2],
 }
 
-impl ConfigureEvent {
+impl<Window> ConfigureEvent<Window> {
     pub fn new(window: Window, position: [i32; 2], size: [i32; 2]) -> Self {
         Self {
             window,
@@ -217,13 +181,17 @@ impl ConfigureEvent {
 }
 
 #[derive(Debug)]
-pub struct FullscreenEvent {
+pub struct FullscreenEvent<Window> {
+    window: Window,
     new_fullscreen: bool,
 }
 
-impl FullscreenEvent {
-    pub fn new(new_fullscreen: bool) -> Self {
-        Self { new_fullscreen }
+impl<Window> FullscreenEvent<Window> {
+    pub fn new(window: Window, new_fullscreen: bool) -> Self {
+        Self {
+            window,
+            new_fullscreen,
+        }
     }
 }
 
