@@ -346,8 +346,6 @@ impl WindowManager {
     }
 
     fn quit(&self) -> ! {
-        self.xlib.close_dpy();
-
         info!("Goodbye.");
 
         std::process::exit(0);

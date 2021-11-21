@@ -1,6 +1,5 @@
+#![allow(unreachable_patterns)]
 use std::{borrow::Borrow, ops::Deref};
-
-use x11::xlib::XKeyReleasedEvent;
 
 use crate::backends::keycodes::{MouseButton, VirtualKeyCode};
 

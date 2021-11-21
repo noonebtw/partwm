@@ -1,3 +1,4 @@
+#![allow(unused_variables, dead_code)]
 use log::{error, warn};
 use std::{
     convert::{TryFrom, TryInto},
@@ -11,7 +12,6 @@ use x11::xlib::{self, Atom, Window, XEvent, XInternAtom};
 use self::keysym::xev_to_mouse_button;
 
 use super::{
-    keycodes::{MouseButton, VirtualKeyCode},
     window_event::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyState,
         MapEvent, ModifierState, UnmapEvent, WindowEvent,
@@ -20,6 +20,8 @@ use super::{
 };
 
 pub mod keysym;
+
+pub type XLibWindowEvent = WindowEvent<xlib::Window>;
 
 #[derive(Clone)]
 pub struct Display(Rc<*mut x11::xlib::Display>);
@@ -150,7 +152,7 @@ impl XLib {
     }
 }
 
-impl TryFrom<XEvent> for WindowEvent<xlib::Window> {
+impl TryFrom<XEvent> for XLibWindowEvent {
     type Error = crate::error::Error;
 
     fn try_from(event: XEvent) -> Result<Self, Self::Error> {

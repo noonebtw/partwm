@@ -207,6 +207,7 @@ impl ClientState {
         self.border_size
     }
 
+    #[allow(dead_code)]
     pub fn set_border_mut(&mut self, new: i32) {
         self.border_size = new;
     }

@@ -53,6 +53,12 @@ impl KeyOrButton {
 #[derive(Clone)]
 pub struct Display(Rc<*mut xlib::Display>);
 
+impl Drop for XLib {
+    fn drop(&mut self) {
+        self.close_dpy();
+    }
+}
+
 impl XLib {
     pub fn new() -> Self {
         let (display, _screen, root) = unsafe {
@@ -391,6 +397,7 @@ impl XLib {
         }
     }
 
+    #[allow(dead_code)]
     fn get_window_attributes(
         &self,
         window: Window,
@@ -421,10 +428,12 @@ impl XLib {
         }
     }
 
+    #[allow(dead_code)]
     pub fn expose_client(&self, client: &Client) {
         self.expose_window(client.window);
     }
 
+    #[allow(dead_code)]
     fn expose_window(&self, window: Window) {
         if let Some(wa) = self.get_window_attributes(window) {
             unsafe {
@@ -527,7 +536,7 @@ impl XLib {
         }
     }
 
-    pub fn close_dpy(&self) {
+    fn close_dpy(&self) {
         unsafe {
             XCloseDisplay(self.dpy());
         }
