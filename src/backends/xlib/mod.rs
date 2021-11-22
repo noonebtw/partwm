@@ -5,6 +5,7 @@ use std::{
     ffi::CString,
     rc::Rc,
 };
+
 use thiserror::Error;
 
 use x11::xlib::{self, Atom, Window, XEvent, XInternAtom};
