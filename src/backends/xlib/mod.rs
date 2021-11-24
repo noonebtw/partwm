@@ -8,11 +8,16 @@ use std::{
 
 use thiserror::Error;
 
-use x11::xlib::{self, Atom, Window, XEvent, XInternAtom};
+use x11::xlib::{
+    self, Atom, KeyPress, KeyRelease, Window, XEvent, XInternAtom, XKeyEvent,
+};
 
-use self::keysym::xev_to_mouse_button;
+use crate::backends::window_event::ModifierKey;
+
+use self::keysym::{virtual_keycode_to_keysym, xev_to_mouse_button, XKeySym};
 
 use super::{
+    keycodes::VirtualKeyCode,
     window_event::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyState,
         MapEvent, ModifierState, UnmapEvent, WindowEvent,
@@ -131,10 +136,17 @@ impl Display {
 
 pub struct XLib {
     display: Display,
+    modifier_state: ModifierState,
     root: Window,
     screen: i32,
     atoms: XLibAtoms,
     keybinds: Vec<()>,
+}
+
+impl Drop for XLib {
+    fn drop(&mut self) {
+        self.close_dpy();
+    }
 }
 
 impl XLib {
@@ -142,14 +154,135 @@ impl XLib {
         self.display.get()
     }
 
-    fn next_xevent(&self) -> XEvent {
+    fn close_dpy(&self) {
         unsafe {
-            let mut event =
-                std::mem::MaybeUninit::<xlib::XEvent>::zeroed().assume_init();
-            xlib::XNextEvent(self.dpy(), &mut event);
-
-            event
+            xlib::XCloseDisplay(self.dpy());
         }
+    }
+
+    fn next_xevent(&mut self) -> XEvent {
+        let event = unsafe {
+            let mut event = std::mem::MaybeUninit::<xlib::XEvent>::zeroed();
+            xlib::XNextEvent(self.dpy(), event.as_mut_ptr());
+
+            event.assume_init()
+        };
+
+        match event.get_type() {
+            xlib::KeyPress | xlib::KeyRelease => {
+                self.update_modifier_state(AsRef::<xlib::XKeyEvent>::as_ref(
+                    &event,
+                ));
+            }
+            _ => {}
+        }
+
+        event
+    }
+
+    fn check_for_protocol(
+        &self,
+        window: xlib::Window,
+        proto: xlib::Atom,
+    ) -> bool {
+        let mut protos: *mut xlib::Atom = std::ptr::null_mut();
+        let mut num_protos: i32 = 0;
+
+        unsafe {
+            if xlib::XGetWMProtocols(
+                self.dpy(),
+                window,
+                &mut protos,
+                &mut num_protos,
+            ) != 0
+            {
+                for i in 0..num_protos {
+                    if *protos.offset(i as isize) == proto {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    fn send_protocol(&self, window: xlib::Window, proto: Atom) -> bool {
+        if self.check_for_protocol(window, proto) {
+            let mut data = xlib::ClientMessageData::default();
+            data.set_long(0, proto as i64);
+
+            let mut event = XEvent {
+                client_message: xlib::XClientMessageEvent {
+                    type_: xlib::ClientMessage,
+                    serial: 0,
+                    display: self.dpy(),
+                    send_event: 0,
+                    window,
+                    format: 32,
+                    message_type: self.atoms.wm_protocols,
+                    data,
+                },
+            };
+
+            unsafe {
+                xlib::XSendEvent(
+                    self.dpy(),
+                    window,
+                    0,
+                    xlib::NoEventMask,
+                    &mut event,
+                );
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+
+    #[allow(non_upper_case_globals)]
+    fn update_modifier_state(&mut self, keyevent: &XKeyEvent) {
+        //keyevent.keycode
+        let keysym = self.keyev_to_keysym(keyevent);
+
+        use x11::keysym::*;
+
+        let modifier = match keysym.get() {
+            XK_Shift_L | XK_Shift_R => Some(ModifierKey::Shift),
+            XK_Control_L | XK_Control_R => Some(ModifierKey::Control),
+            XK_Alt_L | XK_Alt_R => Some(ModifierKey::Alt),
+            XK_ISO_Level3_Shift => Some(ModifierKey::AltGr),
+            XK_Caps_Lock => Some(ModifierKey::ShiftLock),
+            XK_Num_Lock => Some(ModifierKey::NumLock),
+            XK_Win_L | XK_Win_R => Some(ModifierKey::Super),
+            XK_Super_L | XK_Super_R => Some(ModifierKey::Super),
+            _ => None,
+        };
+
+        if let Some(modifier) = modifier {
+            match keyevent.type_ {
+                KeyPress => self.modifier_state.set_mod(modifier),
+                KeyRelease => self.modifier_state.unset_mod(modifier),
+                _ => unreachable!("keyyevent != (KeyPress | KeyRelease)"),
+            }
+        }
+    }
+
+    fn vk_to_keycode(&self, vk: VirtualKeyCode) -> i32 {
+        unsafe {
+            xlib::XKeysymToKeycode(
+                self.dpy(),
+                virtual_keycode_to_keysym(vk).unwrap() as u64,
+            ) as i32
+        }
+    }
+
+    fn keyev_to_keysym(&self, ev: &XKeyEvent) -> XKeySym {
+        let keysym =
+            unsafe { xlib::XLookupKeysym(ev as *const _ as *mut _, 0) };
+
+        XKeySym::new(keysym as u32)
     }
 }
 
@@ -191,7 +324,7 @@ impl TryFrom<XEvent> for XLibWindowEvent {
                     KeyState::Released
                 };
 
-                let modifierstate = ModifierState::new();
+                let modifierstate = ModifierState::empty();
 
                 Ok(Self::ButtonEvent(ButtonEvent::new(
                     ev.window,
@@ -208,8 +341,12 @@ impl TryFrom<XEvent> for XLibWindowEvent {
 impl WindowServerBackend for XLib {
     type Window = xlib::Window;
 
-    fn next_event(&self) -> super::window_event::WindowEvent<Self::Window> {
-        self.next_xevent().try_into().unwrap()
+    fn next_event(&mut self) -> super::window_event::WindowEvent<Self::Window> {
+        std::iter::from_fn(|| {
+            TryInto::<XLibWindowEvent>::try_into(self.next_xevent()).ok()
+        })
+        .next()
+        .unwrap()
     }
 
     fn add_keybind(
@@ -265,10 +402,24 @@ impl WindowServerBackend for XLib {
     }
 
     fn screen_size(&self) -> (i32, i32) {
-        todo!()
+        unsafe {
+            let mut wa =
+                std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed();
+
+            xlib::XGetWindowAttributes(self.dpy(), self.root, wa.as_mut_ptr());
+
+            let wa = wa.assume_init();
+
+            (wa.width, wa.height)
+        }
     }
 
     fn kill_window(&self, window: Self::Window) {
+        if !self.send_protocol(window, self.atoms.wm_delete_window) {
+            unsafe {
+                xlib::XKillClient(self.dpy(), window);
+            }
+        }
         todo!()
     }
 
@@ -290,33 +441,57 @@ impl WindowServerBackend for XLib {
 }
 
 struct XLibAtoms {
-    protocols: Atom,
-    delete_window: Atom,
-    active_window: Atom,
-    take_focus: Atom,
+    wm_protocols: Atom,
+    wm_delete_window: Atom,
+    wm_active_window: Atom,
+    wm_take_focus: Atom,
+    net_supported: Atom,
+    net_active_window: Atom,
+    net_client_list: Atom,
+    net_wm_name: Atom,
+    net_wm_state: Atom,
+    net_wm_state_fullscreen: Atom,
+    net_wm_window_type: Atom,
+    net_wm_window_type_dialog: Atom,
 }
 
 impl XLibAtoms {
     fn init(display: Display) -> Self {
-        unsafe {
-            Self {
-                protocols: {
-                    let name = CString::new("WM_PROTOCOLS").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
-                },
-                delete_window: {
-                    let name = CString::new("WM_DELETE_WINDOW").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
-                },
-                active_window: {
-                    let name = CString::new("WM_ACTIVE_WINDOW").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
-                },
-                take_focus: {
-                    let name = CString::new("WM_TAKE_FOCUS").unwrap();
-                    XInternAtom(display.get(), name.as_c_str().as_ptr(), 0)
-                },
-            }
+        Self {
+            wm_protocols: Self::get_atom(&display, "WM_PROTOCOLS").unwrap(),
+            wm_delete_window: Self::get_atom(&display, "WM_DELETE_WINDOW")
+                .unwrap(),
+            wm_active_window: Self::get_atom(&display, "WM_ACTIVE_WINDOW")
+                .unwrap(),
+            wm_take_focus: Self::get_atom(&display, "WM_TAKE_FOCUS").unwrap(),
+            net_supported: Self::get_atom(&display, "_NET_SUPPORTED").unwrap(),
+            net_active_window: Self::get_atom(&display, "_NET_ACTIVE_WINDOW")
+                .unwrap(),
+            net_client_list: Self::get_atom(&display, "_NET_CLIENT_LIST")
+                .unwrap(),
+            net_wm_name: Self::get_atom(&display, "_NET_WM_NAME").unwrap(),
+            net_wm_state: Self::get_atom(&display, "_NET_WM_STATE").unwrap(),
+            net_wm_state_fullscreen: Self::get_atom(
+                &display,
+                "_NET_WM_STATE_FULLSCREEN",
+            )
+            .unwrap(),
+            net_wm_window_type: Self::get_atom(&display, "_NET_WM_WINDOW_TYPE")
+                .unwrap(),
+            net_wm_window_type_dialog: Self::get_atom(
+                &display,
+                "_NET_WM_WINDOW_TYPE_DIALOG",
+            )
+            .unwrap(),
+        }
+    }
+
+    fn get_atom(display: &Display, atom: &str) -> Option<Atom> {
+        let name = CString::new(atom).ok()?;
+        match unsafe { XInternAtom(display.get(), name.as_c_str().as_ptr(), 0) }
+        {
+            0 => None,
+            atom => Some(atom),
         }
     }
 }

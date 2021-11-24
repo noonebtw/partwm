@@ -38,21 +38,31 @@ pub fn mouse_button_to_xbutton(button: MouseButton) -> i32 {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
-pub struct XKeysym(u32);
+pub struct XKeySym(pub u32);
 
-impl Borrow<u32> for XKeysym {
+impl XKeySym {
+    pub fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub fn get(&self) -> u32 {
+        self.0
+    }
+}
+
+impl Borrow<u32> for XKeySym {
     fn borrow(&self) -> &u32 {
         &self.0
     }
 }
 
-impl AsRef<u32> for XKeysym {
+impl AsRef<u32> for XKeySym {
     fn as_ref(&self) -> &u32 {
         &self.0
     }
 }
 
-impl Deref for XKeysym {
+impl Deref for XKeySym {
     type Target = u32;
 
     fn deref(&self) -> &Self::Target {
@@ -60,12 +70,12 @@ impl Deref for XKeysym {
     }
 }
 
-impl From<XKeysym> for VirtualKeyCode {
-    fn from(value: XKeysym) -> Self {
+impl From<XKeySym> for VirtualKeyCode {
+    fn from(value: XKeySym) -> Self {
         keysym_to_virtual_keycode(*value).unwrap()
     }
 }
-impl From<VirtualKeyCode> for XKeysym {
+impl From<VirtualKeyCode> for XKeySym {
     fn from(value: VirtualKeyCode) -> Self {
         Self(virtual_keycode_to_keysym(value).unwrap())
     }
@@ -2092,12 +2102,12 @@ mod tests {
 
     #[test]
     fn test_keysym_to_vkc() {
-        let keysym: XKeysym = VirtualKeyCode::W.into();
+        let keysym: XKeySym = VirtualKeyCode::W.into();
         let keycode: VirtualKeyCode = keysym.into();
 
         assert_eq!(keycode, VirtualKeyCode::W);
 
-        let keysym2: XKeysym = keycode.into();
+        let keysym2: XKeySym = keycode.into();
 
         assert_eq!(keysym2, keysym);
         assert_eq!(&x11::keysym::XK_W, keysym.as_ref());

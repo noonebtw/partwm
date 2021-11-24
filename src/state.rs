@@ -382,7 +382,7 @@ where
 
     fn kill_client(&mut self) {
         if let Some(client) = self.clients.get_focused().into_option() {
-            //self.xlib.kill_client(client);
+            self.backend.kill_window(client.window);
         }
     }
 

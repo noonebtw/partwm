@@ -9,7 +9,7 @@ pub trait WindowServerBackend {
 
     fn new() -> Self;
 
-    fn next_event(&self) -> window_event::WindowEvent<Self::Window>;
+    fn next_event(&mut self) -> window_event::WindowEvent<Self::Window>;
     fn add_keybind(&mut self, keybind: KeyBind, window: Option<Self::Window>);
     fn remove_keybind(
         &mut self,
