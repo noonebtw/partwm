@@ -1,7 +1,7 @@
 #![allow(dead_code)]
-//use x11::xlib::Window;
 
 use super::keycodes::{MouseButton, VirtualKeyCode};
+use bitflags::bitflags;
 
 #[derive(Debug)]
 pub enum WindowEvent<Window> {
@@ -37,110 +37,70 @@ pub enum ModifierKey {
     NumLock,
 }
 
-impl Into<u8> for ModifierKey {
-    fn into(self) -> u8 {
-        self as u8
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct ModifierState {
-    modifiers: std::collections::HashSet<ModifierKey>,
-}
-
-impl ModifierState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_mod(mut self, modifier: ModifierKey) -> Self {
-        self.set_modifier(modifier);
-        self
-    }
-
-    pub fn set_modifier(&mut self, modifier: ModifierKey) {
-        self.modifiers.insert(modifier);
-    }
-
-    pub fn unset_modifier(&mut self, modifier: ModifierKey) {
-        self.modifiers.remove(&modifier);
-    }
-
-    pub fn get_modifier(&mut self, modifier: ModifierKey) -> bool {
-        self.modifiers.contains(&modifier)
-    }
-
-    pub fn all() -> Self {
-        [
-            ModifierKey::Alt,
-            ModifierKey::Shift,
-            ModifierKey::AltGr,
-            ModifierKey::Super,
-            ModifierKey::Control,
-            ModifierKey::NumLock,
-            ModifierKey::ShiftLock,
-        ]
-        .into()
-    }
-
-    pub fn ignore_mask() -> Self {
-        [
-            ModifierKey::Alt,
-            ModifierKey::AltGr,
-            ModifierKey::Shift,
-            ModifierKey::Super,
-            ModifierKey::Control,
-        ]
-        .into()
-    }
-
-    pub fn eq_ignore_lock(&self, other: &Self) -> bool {
-        let mask = &Self::ignore_mask();
-        self & mask == other & mask
+bitflags! {
+    pub struct ModifierState: u32 {
+        const SHIFT      =       0x01;
+        const SHIFT_LOCK =      0x010;
+        const CONTROL    =     0x0100;
+        const ALT        =    0x01000;
+        const ALT_GR     =   0x010000;
+        const SUPER      =  0x0100000;
+        const NUM_LOCK   = 0x01000000;
+        const IGNORE_LOCK = Self::CONTROL.bits | Self::ALT.bits |
+        Self::ALT_GR.bits | Self::SUPER.bits| Self::SHIFT.bits;
     }
 }
 
 impl<const N: usize> From<[ModifierKey; N]> for ModifierState {
     fn from(slice: [ModifierKey; N]) -> Self {
-        Self {
-            modifiers: std::collections::HashSet::from(slice),
+        let mut state = ModifierState::empty();
+        for ele in slice {
+            state.set_mod(ele);
+        }
+
+        state
+    }
+}
+
+impl ModifierState {
+    pub fn eq_ignore_lock(&self, rhs: &Self) -> bool {
+        let mask = Self::IGNORE_LOCK;
+        *self & mask == *rhs & mask
+    }
+
+    pub fn with_mod(mut self, modifier: ModifierKey) -> Self {
+        self.set_mod(modifier);
+        self
+    }
+
+    pub fn unset_mod(&mut self, modifier: ModifierKey) {
+        match modifier {
+            ModifierKey::Shift => self.remove(Self::SHIFT),
+            ModifierKey::ShiftLock => self.remove(Self::SHIFT_LOCK),
+            ModifierKey::Control => self.remove(Self::CONTROL),
+            ModifierKey::Alt => self.remove(Self::ALT),
+            ModifierKey::AltGr => self.remove(Self::ALT_GR),
+            ModifierKey::Super => self.remove(Self::SUPER),
+            ModifierKey::NumLock => self.remove(Self::NUM_LOCK),
+        }
+    }
+
+    pub fn set_mod(&mut self, modifier: ModifierKey) {
+        match modifier {
+            ModifierKey::Shift => self.insert(Self::SHIFT),
+            ModifierKey::ShiftLock => self.insert(Self::SHIFT_LOCK),
+            ModifierKey::Control => self.insert(Self::CONTROL),
+            ModifierKey::Alt => self.insert(Self::ALT),
+            ModifierKey::AltGr => self.insert(Self::ALT_GR),
+            ModifierKey::Super => self.insert(Self::SUPER),
+            ModifierKey::NumLock => self.insert(Self::NUM_LOCK),
         }
     }
 }
 
-impl From<std::collections::HashSet<ModifierKey>> for ModifierState {
-    fn from(set: std::collections::HashSet<ModifierKey>) -> Self {
-        Self { modifiers: set }
-    }
-}
-
-impl std::ops::BitXor for &ModifierState {
-    type Output = ModifierState;
-
-    fn bitxor(self, rhs: Self) -> Self::Output {
-        Self::Output {
-            modifiers: self.modifiers.bitxor(&rhs.modifiers),
-        }
-    }
-}
-
-impl std::ops::BitOr for &ModifierState {
-    type Output = ModifierState;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self::Output {
-            modifiers: self.modifiers.bitor(&rhs.modifiers),
-        }
-    }
-}
-
-impl std::ops::BitAnd for &ModifierState {
-    type Output = ModifierState;
-
-    fn bitand(self, rhs: Self) -> Self::Output {
-        Self::Output {
-            modifiers: self.modifiers.bitand(&rhs.modifiers),
-        }
+impl Into<u8> for ModifierKey {
+    fn into(self) -> u8 {
+        self as u8
     }
 }
 
@@ -289,12 +249,12 @@ impl KeyBind {
     pub fn new(key: VirtualKeyCode) -> Self {
         Self {
             key,
-            modifiers: Default::default(),
+            modifiers: ModifierState::empty(),
         }
     }
 
     pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
-        self.modifiers.set_modifier(modifier_key);
+        self.modifiers.set_mod(modifier_key);
         self
     }
 }
