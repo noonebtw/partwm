@@ -252,11 +252,11 @@ impl WindowServerBackend for XLib {
         todo!()
     }
 
-    fn move_window(&self, window: Self::Window, pos: i32) {
+    fn move_window(&self, window: Self::Window, new_pos: (i32, i32)) {
         todo!()
     }
 
-    fn resize_window(&self, window: Self::Window, pos: i32) {
+    fn resize_window(&self, window: Self::Window, new_pos: (i32, i32)) {
         todo!()
     }
 
@@ -269,6 +269,22 @@ impl WindowServerBackend for XLib {
     }
 
     fn kill_window(&self, window: Self::Window) {
+        todo!()
+    }
+
+    fn raise_window(&self, window: Self::Window) {
+        todo!()
+    }
+
+    fn get_parent_window(&self, window: Self::Window) -> Option<Self::Window> {
+        todo!()
+    }
+
+    fn get_window_size(&self, window: Self::Window) -> Option<(i32, i32)> {
+        todo!()
+    }
+
+    fn new() -> Self {
         todo!()
     }
 }

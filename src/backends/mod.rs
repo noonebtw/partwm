@@ -7,6 +7,8 @@ pub mod xlib;
 pub trait WindowServerBackend {
     type Window;
 
+    fn new() -> Self;
+
     fn next_event(&self) -> window_event::WindowEvent<Self::Window>;
     fn add_keybind(&mut self, keybind: KeyBind, window: Option<Self::Window>);
     fn remove_keybind(
@@ -22,9 +24,12 @@ pub trait WindowServerBackend {
     );
     fn focus_window(&self, window: Self::Window);
     fn unfocus_window(&self, window: Self::Window);
-    fn move_window(&self, window: Self::Window, pos: i32);
-    fn resize_window(&self, window: Self::Window, pos: i32);
+    fn move_window(&self, window: Self::Window, new_pos: (i32, i32));
+    fn resize_window(&self, window: Self::Window, new_size: (i32, i32));
+    fn raise_window(&self, window: Self::Window);
+    fn get_parent_window(&self, window: Self::Window) -> Option<Self::Window>;
     fn hide_window(&self, window: Self::Window);
     fn screen_size(&self) -> (i32, i32);
     fn kill_window(&self, window: Self::Window);
+    fn get_window_size(&self, window: Self::Window) -> Option<(i32, i32)>;
 }

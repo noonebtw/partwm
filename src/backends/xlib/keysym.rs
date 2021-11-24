@@ -1,7 +1,10 @@
 #![allow(unreachable_patterns)]
 use std::{borrow::Borrow, ops::Deref};
 
-use crate::backends::keycodes::{MouseButton, VirtualKeyCode};
+use crate::backends::{
+    keycodes::{MouseButton, VirtualKeyCode},
+    window_event::ModifierState,
+};
 
 pub fn xev_to_mouse_button(
     button: &x11::xlib::XButtonEvent,
@@ -66,6 +69,10 @@ impl From<VirtualKeyCode> for XKeysym {
     fn from(value: VirtualKeyCode) -> Self {
         Self(virtual_keycode_to_keysym(value).unwrap())
     }
+}
+
+pub fn xlib_state_to_modifier_state(state: u32) -> ModifierState {
+    todo!()
 }
 
 /// from winit
@@ -256,16 +263,16 @@ pub fn keysym_to_virtual_keycode(keysym: u32) -> Option<VirtualKeyCode> {
         x11::keysym::XK_minus => VirtualKeyCode::Minus,
         x11::keysym::XK_period => VirtualKeyCode::Period,
         x11::keysym::XK_slash => VirtualKeyCode::Slash,
-        x11::keysym::XK_0 => VirtualKeyCode::Key0,
-        x11::keysym::XK_1 => VirtualKeyCode::Key1,
-        x11::keysym::XK_2 => VirtualKeyCode::Key2,
-        x11::keysym::XK_3 => VirtualKeyCode::Key3,
-        x11::keysym::XK_4 => VirtualKeyCode::Key4,
-        x11::keysym::XK_5 => VirtualKeyCode::Key5,
-        x11::keysym::XK_6 => VirtualKeyCode::Key6,
-        x11::keysym::XK_7 => VirtualKeyCode::Key7,
-        x11::keysym::XK_8 => VirtualKeyCode::Key8,
-        x11::keysym::XK_9 => VirtualKeyCode::Key9,
+        x11::keysym::XK_0 => VirtualKeyCode::Zero,
+        x11::keysym::XK_1 => VirtualKeyCode::One,
+        x11::keysym::XK_2 => VirtualKeyCode::Two,
+        x11::keysym::XK_3 => VirtualKeyCode::Three,
+        x11::keysym::XK_4 => VirtualKeyCode::Four,
+        x11::keysym::XK_5 => VirtualKeyCode::Five,
+        x11::keysym::XK_6 => VirtualKeyCode::Six,
+        x11::keysym::XK_7 => VirtualKeyCode::Seven,
+        x11::keysym::XK_8 => VirtualKeyCode::Eight,
+        x11::keysym::XK_9 => VirtualKeyCode::Nine,
         x11::keysym::XK_colon => VirtualKeyCode::Colon,
         x11::keysym::XK_semicolon => VirtualKeyCode::Semicolon,
         //x11::keysym::XK_less => VirtualKeyCode::Less,
@@ -1261,16 +1268,16 @@ pub fn virtual_keycode_to_keysym(keycode: VirtualKeyCode) -> Option<u32> {
         VirtualKeyCode::Minus => x11::keysym::XK_minus,
         VirtualKeyCode::Period => x11::keysym::XK_period,
         VirtualKeyCode::Slash => x11::keysym::XK_slash,
-        VirtualKeyCode::Key0 => x11::keysym::XK_0,
-        VirtualKeyCode::Key1 => x11::keysym::XK_1,
-        VirtualKeyCode::Key2 => x11::keysym::XK_2,
-        VirtualKeyCode::Key3 => x11::keysym::XK_3,
-        VirtualKeyCode::Key4 => x11::keysym::XK_4,
-        VirtualKeyCode::Key5 => x11::keysym::XK_5,
-        VirtualKeyCode::Key6 => x11::keysym::XK_6,
-        VirtualKeyCode::Key7 => x11::keysym::XK_7,
-        VirtualKeyCode::Key8 => x11::keysym::XK_8,
-        VirtualKeyCode::Key9 => x11::keysym::XK_9,
+        VirtualKeyCode::Zero => x11::keysym::XK_0,
+        VirtualKeyCode::One => x11::keysym::XK_1,
+        VirtualKeyCode::Two => x11::keysym::XK_2,
+        VirtualKeyCode::Three => x11::keysym::XK_3,
+        VirtualKeyCode::Four => x11::keysym::XK_4,
+        VirtualKeyCode::Five => x11::keysym::XK_5,
+        VirtualKeyCode::Six => x11::keysym::XK_6,
+        VirtualKeyCode::Seven => x11::keysym::XK_7,
+        VirtualKeyCode::Eight => x11::keysym::XK_8,
+        VirtualKeyCode::Nine => x11::keysym::XK_9,
         VirtualKeyCode::Colon => x11::keysym::XK_colon,
         VirtualKeyCode::Semicolon => x11::keysym::XK_semicolon,
         //VirtualKeyCode::Less => x11::keysym::XK_less,

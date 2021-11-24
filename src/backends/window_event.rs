@@ -37,7 +37,13 @@ pub enum ModifierKey {
     NumLock,
 }
 
-#[derive(Default, Debug, Clone)]
+impl Into<u8> for ModifierKey {
+    fn into(self) -> u8 {
+        self as u8
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct ModifierState {
     modifiers: std::collections::HashSet<ModifierKey>,
 }
@@ -45,6 +51,11 @@ pub struct ModifierState {
 impl ModifierState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_mod(mut self, modifier: ModifierKey) -> Self {
+        self.set_modifier(modifier);
+        self
     }
 
     pub fn set_modifier(&mut self, modifier: ModifierKey) {
@@ -57,6 +68,79 @@ impl ModifierState {
 
     pub fn get_modifier(&mut self, modifier: ModifierKey) -> bool {
         self.modifiers.contains(&modifier)
+    }
+
+    pub fn all() -> Self {
+        [
+            ModifierKey::Alt,
+            ModifierKey::Shift,
+            ModifierKey::AltGr,
+            ModifierKey::Super,
+            ModifierKey::Control,
+            ModifierKey::NumLock,
+            ModifierKey::ShiftLock,
+        ]
+        .into()
+    }
+
+    pub fn ignore_mask() -> Self {
+        [
+            ModifierKey::Alt,
+            ModifierKey::AltGr,
+            ModifierKey::Shift,
+            ModifierKey::Super,
+            ModifierKey::Control,
+        ]
+        .into()
+    }
+
+    pub fn eq_ignore_lock(&self, other: &Self) -> bool {
+        let mask = &Self::ignore_mask();
+        self & mask == other & mask
+    }
+}
+
+impl<const N: usize> From<[ModifierKey; N]> for ModifierState {
+    fn from(slice: [ModifierKey; N]) -> Self {
+        Self {
+            modifiers: std::collections::HashSet::from(slice),
+        }
+    }
+}
+
+impl From<std::collections::HashSet<ModifierKey>> for ModifierState {
+    fn from(set: std::collections::HashSet<ModifierKey>) -> Self {
+        Self { modifiers: set }
+    }
+}
+
+impl std::ops::BitXor for &ModifierState {
+    type Output = ModifierState;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self::Output {
+            modifiers: self.modifiers.bitxor(&rhs.modifiers),
+        }
+    }
+}
+
+impl std::ops::BitOr for &ModifierState {
+    type Output = ModifierState;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self::Output {
+            modifiers: self.modifiers.bitor(&rhs.modifiers),
+        }
+    }
+}
+
+impl std::ops::BitAnd for &ModifierState {
+    type Output = ModifierState;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self::Output {
+            modifiers: self.modifiers.bitand(&rhs.modifiers),
+        }
     }
 }
 
@@ -195,9 +279,24 @@ impl<Window> FullscreenEvent<Window> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct KeyBind {
     key: VirtualKeyCode,
     modifiers: ModifierState,
+}
+
+impl KeyBind {
+    pub fn new(key: VirtualKeyCode) -> Self {
+        Self {
+            key,
+            modifiers: Default::default(),
+        }
+    }
+
+    pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
+        self.modifiers.set_modifier(modifier_key);
+        self
+    }
 }
 
 pub struct MouseBind {

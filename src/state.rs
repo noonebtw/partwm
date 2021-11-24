@@ -3,19 +3,24 @@ use std::rc::Rc;
 use log::{error, info};
 
 use x11::xlib::{
-    self, Mod4Mask, ShiftMask, Window, XButtonPressedEvent,
-    XButtonReleasedEvent, XEvent, XKeyEvent, XMotionEvent,
+    self, Window, XButtonPressedEvent, XButtonReleasedEvent, XEvent, XKeyEvent,
+    XMotionEvent,
 };
 use xlib::{
-    ButtonPressMask, ButtonReleaseMask, PointerMotionMask,
     XConfigureRequestEvent, XCrossingEvent, XDestroyWindowEvent,
     XMapRequestEvent, XUnmapEvent,
 };
 
 use crate::{
+    backends::{
+        keycodes::{MouseButton, VirtualKeyCode},
+        window_event::{
+            ButtonEvent, KeyBind, KeyEvent, ModifierKey, ModifierState,
+        },
+        xlib::XLib,
+        WindowServerBackend,
+    },
     clients::{Client, ClientEntry, ClientKey, ClientState},
-    xlib::KeyOrButton,
-    xlib::XLib,
 };
 
 /**
@@ -24,15 +29,18 @@ be able to configure in a config file.
 */
 pub struct WMConfig {
     num_virtualscreens: usize,
-    mod_key: u32,
+    mod_key: ModifierKey,
     gap: Option<i32>,
 }
 
-pub struct WindowManager {
+pub struct WindowManager<B = XLib>
+where
+    B: WindowServerBackend,
+{
     clients: ClientState,
     move_resize_window: MoveResizeInfo,
-    keybinds: Vec<KeyBinding>,
-    xlib: XLib,
+    keybinds: Vec<KeyBinding<B>>,
+    backend: B,
 
     config: WMConfig,
 }
@@ -64,50 +72,71 @@ struct ResizeInfoInner {
 }
 
 #[derive(Clone)]
-struct KeyBinding {
-    key: KeyOrButton,
-    closure: Rc<dyn Fn(&mut WindowManager, &XKeyEvent)>,
+struct KeyBinding<B: WindowServerBackend> {
+    key: KeyBind,
+    closure: Rc<dyn Fn(&mut WindowManager<B>, &KeyEvent<B::Window>)>,
 }
 
-impl WindowManager {
+impl<B: WindowServerBackend> KeyBinding<B> {
+    pub fn new<F>(key: KeyBind, cb: F) -> Self
+    where
+        F: Fn(&mut WindowManager<B>, &KeyEvent<B::Window>),
+        F: 'static,
+    {
+        Self {
+            key,
+            closure: Rc::new(cb),
+        }
+    }
+
+    pub fn call(&self, wm: &mut WindowManager<B>, ev: &KeyEvent<B::Window>) {
+        (self.closure)(wm, ev);
+    }
+}
+
+impl<B> WindowManager<B>
+where
+    B: WindowServerBackend<Window = xlib::Window>,
+{
     pub fn new(config: WMConfig) -> Self {
-        let xlib = XLib::new();
+        let backend = B::new();
 
         let clients = ClientState::new()
             .with_virtualscreens(config.num_virtualscreens)
             .with_gap(config.gap.unwrap_or(1))
             .with_border(1)
-            .with_screen_size(xlib.dimensions());
+            .with_screen_size(backend.screen_size());
 
         Self {
             clients,
             move_resize_window: MoveResizeInfo::None,
             keybinds: Vec::new(),
-            xlib,
+            backend,
             config,
         }
         .init()
     }
 
     fn init(mut self) -> Self {
-        self.xlib.add_global_keybind(KeyOrButton::button(
-            1,
-            self.config.mod_key,
-            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        ));
-        self.xlib.add_global_keybind(KeyOrButton::button(
-            2,
-            self.config.mod_key,
-            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        ));
-        self.xlib.add_global_keybind(KeyOrButton::button(
-            3,
-            self.config.mod_key,
-            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        ));
+        // TODO: fix keybinds for moving windows and stuff
+        // self.xlib.add_global_keybind(KeyOrButton::button(
+        //     1,
+        //     self.config.mod_key,
+        //     ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        // ));
+        // self.xlib.add_global_keybind(KeyOrButton::button(
+        //     2,
+        //     self.config.mod_key,
+        //     ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        // ));
+        // self.xlib.add_global_keybind(KeyOrButton::button(
+        //     3,
+        //     self.config.mod_key,
+        //     ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        // ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("P", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::P).with_mod(self.config.mod_key),
             |wm, _| {
                 wm.spawn(
                     "dmenu_run",
@@ -130,22 +159,22 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Print", 0),
+            KeyBind::new(VirtualKeyCode::Snapshot),
             |wm, _| wm.spawn("screenshot.sh", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Print", ShiftMask),
+            KeyBind::new(VirtualKeyCode::Snapshot).with_mod(ModifierKey::Shift),
             |wm, _| wm.spawn("screenshot.sh", &["-edit"]),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("M", self.config.mod_key),
-            Self::handle_switch_stack,
+            KeyBind::new(VirtualKeyCode::M).with_mod(self.config.mod_key),
+            |wm, _| wm.handle_switch_stack(),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("F", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::F).with_mod(self.config.mod_key),
             |wm, _| {
                 wm.clients
                     .get_focused()
@@ -158,45 +187,50 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Q", self.config.mod_key),
-            Self::kill_client,
+            KeyBind::new(VirtualKeyCode::Q).with_mod(self.config.mod_key),
+            |wm, _| wm.kill_client(),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Q", self.config.mod_key | ShiftMask),
+            KeyBind::new(VirtualKeyCode::Q)
+                .with_mod(self.config.mod_key)
+                .with_mod(ModifierKey::Shift),
             |wm, _| wm.quit(),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib
-                .make_key("Return", self.config.mod_key | ShiftMask),
+            KeyBind::new(VirtualKeyCode::Return)
+                .with_mod(self.config.mod_key)
+                .with_mod(ModifierKey::Shift),
             |wm, _| wm.spawn("alacritty", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("J", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::J).with_mod(self.config.mod_key),
             |wm, _| wm.move_focus(Direction::south()),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("K", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::K).with_mod(self.config.mod_key),
             |wm, _| wm.move_focus(Direction::north()),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("H", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::H).with_mod(self.config.mod_key),
             |wm, _| wm.move_focus(Direction::west()),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("L", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::L).with_mod(self.config.mod_key),
             |wm, _| wm.move_focus(Direction::east()),
         ));
 
         // resize master stack
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("K", self.config.mod_key | ShiftMask),
+            KeyBind::new(VirtualKeyCode::K)
+                .with_mod(self.config.mod_key)
+                .with_mod(ModifierKey::Shift),
             |wm, _| {
                 wm.clients.change_master_size(0.1);
                 wm.arrange_clients();
@@ -204,7 +238,9 @@ impl WindowManager {
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("J", self.config.mod_key | ShiftMask),
+            KeyBind::new(VirtualKeyCode::J)
+                .with_mod(self.config.mod_key)
+                .with_mod(ModifierKey::Shift),
             |wm, _| {
                 wm.clients.change_master_size(-0.1);
                 wm.arrange_clients();
@@ -213,53 +249,45 @@ impl WindowManager {
 
         self.add_vs_switch_keybinds();
 
-        self.xlib.init();
+        //self.xlib.init();
 
         self
     }
 
-    fn add_keybind(&mut self, keybind: KeyBinding) {
-        self.xlib.add_global_keybind(keybind.key);
+    fn add_keybind(&mut self, keybind: KeyBinding<B>) {
+        //self.xlib.add_global_keybind(keybind.key);
         self.keybinds.push(keybind);
     }
 
     fn add_vs_switch_keybinds(&mut self) {
-        fn rotate_west<const N: usize>(wm: &mut WindowManager, _: &XKeyEvent) {
-            wm.rotate_virtual_screen(Direction::West(N));
-        }
-
-        fn rotate_east<const N: usize>(wm: &mut WindowManager, _: &XKeyEvent) {
-            wm.rotate_virtual_screen(Direction::East(N));
-        }
-
-        fn goto_nth<const N: usize>(wm: &mut WindowManager, _: &XKeyEvent) {
-            wm.go_to_nth_virtual_screen(N)
-        }
-
         // Old keybinds
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Left", self.config.mod_key),
-            rotate_west::<1>,
+            KeyBind::new(VirtualKeyCode::Left).with_mod(self.config.mod_key),
+            |wm, _| wm.rotate_virtual_screen(Direction::West(1)),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("H", self.config.mod_key | ShiftMask),
-            rotate_west::<1>,
+            KeyBind::new(VirtualKeyCode::H)
+                .with_mod(self.config.mod_key)
+                .with_mod(ModifierKey::Shift),
+            |wm, _| wm.rotate_virtual_screen(Direction::West(1)),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Right", self.config.mod_key),
-            rotate_east::<1>,
+            KeyBind::new(VirtualKeyCode::Right).with_mod(self.config.mod_key),
+            |wm, _| wm.rotate_virtual_screen(Direction::East(1)),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("L", self.config.mod_key | ShiftMask),
-            rotate_east::<1>,
+            KeyBind::new(VirtualKeyCode::L)
+                .with_mod(self.config.mod_key)
+                .with_mod(ModifierKey::Shift),
+            |wm, _| wm.rotate_virtual_screen(Direction::East(1)),
         ));
 
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("Tab", self.config.mod_key),
+            KeyBind::new(VirtualKeyCode::Tab).with_mod(self.config.mod_key),
             |wm, _| wm.rotate_virtual_screen_back(),
         ));
 
@@ -267,79 +295,80 @@ impl WindowManager {
 
         // Press Mod + `1` to move go to the `1`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("1", self.config.mod_key),
-            goto_nth::<1>,
+            KeyBind::new(VirtualKeyCode::One).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(1),
         ));
 
         // Press Mod + `2` to move go to the `2`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("2", self.config.mod_key),
-            goto_nth::<2>,
+            KeyBind::new(VirtualKeyCode::Two).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(2),
         ));
 
         // Press Mod + `3` to move go to the `3`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("3", self.config.mod_key),
-            goto_nth::<3>,
+            KeyBind::new(VirtualKeyCode::Three).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(3),
         ));
 
         // Press Mod + `4` to move go to the `4`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("4", self.config.mod_key),
-            goto_nth::<4>,
+            KeyBind::new(VirtualKeyCode::Four).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(4),
         ));
 
         // Press Mod + `5` to move go to the `5`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("5", self.config.mod_key),
-            goto_nth::<5>,
+            KeyBind::new(VirtualKeyCode::Five).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(5),
         ));
 
         // Press Mod + `6` to move go to the `6`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("6", self.config.mod_key),
-            goto_nth::<6>,
+            KeyBind::new(VirtualKeyCode::Six).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(6),
         ));
 
         // Press Mod + `7` to move go to the `7`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("7", self.config.mod_key),
-            goto_nth::<7>,
+            KeyBind::new(VirtualKeyCode::Seven).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(7),
         ));
 
         // Press Mod + `8` to move go to the `8`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("8", self.config.mod_key),
-            goto_nth::<8>,
+            KeyBind::new(VirtualKeyCode::Eight).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(8),
         ));
 
         // Press Mod + `9` to move go to the `9`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("9", self.config.mod_key),
-            goto_nth::<9>,
+            KeyBind::new(VirtualKeyCode::Nine).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(9),
         ));
 
         // Press Mod + `0` to move go to the `0`th virtual screen
         self.add_keybind(KeyBinding::new(
-            self.xlib.make_key("0", self.config.mod_key),
-            goto_nth::<10>,
+            KeyBind::new(VirtualKeyCode::Zero).with_mod(self.config.mod_key),
+            |wm, _| wm.go_to_nth_virtual_screen(10),
         ));
     }
 
+    #[allow(unused_mut)]
     pub fn run(mut self) -> ! {
         loop {
-            let event = self.xlib.next_event();
+            let event = self.backend.next_event();
 
-            match event.get_type() {
-                xlib::MapRequest => self.map_request(&event),
-                xlib::UnmapNotify => self.unmap_notify(&event),
-                xlib::ConfigureRequest => self.configure_request(&event),
-                xlib::EnterNotify => self.enter_notify(&event),
-                xlib::DestroyNotify => self.destroy_notify(&event),
-                xlib::ButtonPress => self.button_press(event.as_ref()),
-                xlib::ButtonRelease => self.button_release(event.as_ref()),
-                xlib::MotionNotify => self.motion_notify(event.as_ref()),
-                xlib::KeyPress => self.handle_keybinds(event.as_ref()),
+            match event {
+                // xlib::MapRequest => self.map_request(&event),
+                // xlib::UnmapNotify => self.unmap_notify(&event),
+                // xlib::ConfigureRequest => self.configure_request(&event),
+                // xlib::EnterNotify => self.enter_notify(&event),
+                // xlib::DestroyNotify => self.destroy_notify(&event),
+                // xlib::ButtonPress => self.button_press(event.as_ref()),
+                // xlib::ButtonRelease => self.button_release(event.as_ref()),
+                // xlib::MotionNotify => self.motion_notify(event.as_ref()),
+                // xlib::KeyPress => self.handle_keybinds(event.as_ref()),
                 _ => {}
             }
         }
@@ -351,27 +380,28 @@ impl WindowManager {
         std::process::exit(0);
     }
 
-    fn kill_client(&mut self, _event: &XKeyEvent) {
+    fn kill_client(&mut self) {
         if let Some(client) = self.clients.get_focused().into_option() {
-            self.xlib.kill_client(client);
+            //self.xlib.kill_client(client);
         }
     }
 
     // TODO: change this somehow cuz I'm not a big fan of this "hardcoded" keybind stuff
     fn handle_keybinds(&mut self, event: &XKeyEvent) {
-        let clean_mask = self.xlib.get_clean_mask();
-        for kb in self.keybinds.clone().into_iter() {
-            if let KeyOrButton::Key(keycode, modmask) = kb.key {
-                if keycode as u32 == event.keycode
-                    && modmask & clean_mask == event.state & clean_mask
-                {
-                    (kb.closure)(self, event);
-                }
-            }
-        }
+        //let clean_mask = self.xlib.get_clean_mask();
+        // TODO: Fix this
+        // for kb in self.keybinds.clone().into_iter() {
+        //     if let KeyOrButton::Key(keycode, modmask) = kb.key {
+        //         if keycode as u32 == event.keycode
+        //             && modmask & clean_mask == event.state & clean_mask
+        //         {
+        //             (kb.closure)(self, event);
+        //         }
+        //     }
+        // }
     }
 
-    fn handle_switch_stack(&mut self, _event: &XKeyEvent) {
+    fn handle_switch_stack(&mut self) {
         if let Some(client) =
             self.clients.get_focused().into_option().map(|c| c.key())
         {
@@ -506,22 +536,23 @@ impl WindowManager {
     fn hide_hidden_clients(&self) {
         self.clients
             .iter_hidden()
-            .for_each(|(_, c)| self.xlib.hide_client(c));
+            .for_each(|(_, c)| self.backend.hide_window(c.window));
     }
 
     fn raise_floating_clients(&self) {
         self.clients
             .iter_floating()
-            .for_each(|(_, c)| self.xlib.raise_client(c));
+            .for_each(|(_, c)| self.backend.raise_window(c.window));
 
         self.clients
             .iter_transient()
-            .for_each(|(_, c)| self.xlib.raise_client(c));
+            .for_each(|(_, c)| self.backend.raise_window(c.window));
     }
 
     fn arrange_clients(&mut self) {
         self.clients.iter_visible().for_each(|(_, c)| {
-            self.xlib.move_resize_client(c);
+            self.backend.move_window(c.window, c.position);
+            self.backend.resize_window(c.window, c.size);
             //self.xlib.expose_client(c);
         });
 
@@ -546,19 +577,19 @@ impl WindowManager {
         let (new, old) = self.clients.focus_client(key);
 
         if let Some(old) = old.into_option() {
-            self.xlib.unfocus_client(old);
+            self.backend.unfocus_window(old.window);
         }
 
         match new {
             ClientEntry::Floating(new) => {
-                self.xlib.focus_client(new);
+                self.backend.focus_window(new.window);
 
                 if try_raise {
-                    self.xlib.raise_client(new);
+                    self.backend.raise_window(new.window);
                 }
             }
             ClientEntry::Tiled(new) => {
-                self.xlib.focus_client(new);
+                self.backend.focus_window(new.window);
             }
             _ => {}
         }
@@ -567,23 +598,23 @@ impl WindowManager {
     fn new_client(&mut self, window: Window) {
         info!("new client: {:?}", window);
         let client = if let Some(transient_window) =
-            self.xlib.get_transient_for_window(window)
+            self.backend.get_parent_window(window)
         {
             Client::new_transient(
                 window,
-                self.xlib.get_window_size(window).unwrap_or((100, 100)),
+                self.backend.get_window_size(window).unwrap_or((100, 100)),
                 transient_window,
             )
         } else {
             Client::new_default(window)
         };
 
-        self.xlib
-            .configure_client(&client, self.clients.get_border());
+        //self.xlib
+        //.configure_client(&client, self.clients.get_border());
         self.clients.insert(client).unwrap();
         self.arrange_clients();
 
-        self.xlib.map_window(window);
+        //self.xlib.map_window(window);
 
         self.focus_client(&window, true);
     }
@@ -615,12 +646,12 @@ impl WindowManager {
     fn configure_request(&mut self, event: &XEvent) {
         let event: &XConfigureRequestEvent = event.as_ref();
 
-        match self.clients.get(&event.window).into_option() {
-            Some(client) => self
-                .xlib
-                .configure_client(client, self.clients.get_border()),
-            None => self.xlib.configure_window(event),
-        }
+        // match self.clients.get(&event.window).into_option() {
+        //     Some(client) => self
+        //         .xlib
+        //         .configure_client(client, self.clients.get_border()),
+        //     None => self.xlib.configure_window(event),
+        // }
     }
 
     fn enter_notify(&mut self, event: &XEvent) {
@@ -663,8 +694,9 @@ impl WindowManager {
                     )
                 };
 
-                self.xlib.move_cursor(None, corner_pos);
-                self.xlib.grab_cursor();
+                // TODO fix backend cursor api
+                //self.xlib.move_cursor(None, corner_pos);
+                //self.xlib.grab_cursor();
 
                 self.move_resize_window =
                     MoveResizeInfo::Resize(ResizeInfoInner {
@@ -682,7 +714,8 @@ impl WindowManager {
             self.move_resize_window = MoveResizeInfo::None;
         }
         if event.button == 3 {
-            self.xlib.release_cursor();
+            // TODO fix backend cursor api
+            //self.xlib.release_cursor();
         }
     }
 
@@ -702,7 +735,7 @@ impl WindowManager {
                     position.0 = info.starting_window_pos.0 + x;
                     position.1 = info.starting_window_pos.1 + y;
 
-                    self.xlib.move_client(client);
+                    self.backend.move_window(client.window, client.position);
                 }
             }
             MoveResizeInfo::Resize(info) => {
@@ -719,30 +752,31 @@ impl WindowManager {
                     size.0 = std::cmp::max(1, info.starting_window_size.0 + x);
                     size.1 = std::cmp::max(1, info.starting_window_size.1 + y);
 
-                    self.xlib.resize_client(client);
+                    self.backend.resize_window(client.window, client.size);
                 }
             }
             _ => {}
         }
     }
 
-    fn button_press(&mut self, event: &XButtonPressedEvent) {
-        self.focus_client(&event.subwindow, true);
+    fn button_press(&mut self, event: &ButtonEvent<B::Window>) {
+        self.focus_client(&event.window, true);
 
-        match event.button {
-            1 | 3 => match self.move_resize_window {
-                MoveResizeInfo::None
-                    if self
-                        .xlib
-                        .are_masks_equal(event.state, self.config.mod_key)
-                        && self.clients.contains(&event.subwindow) =>
-                {
-                    self.start_move_resize_window(event)
+        match event.keycode {
+            MouseButton::Left | MouseButton::Right => {
+                match self.move_resize_window {
+                    MoveResizeInfo::None
+                        if ModifierState::from([self.config.mod_key])
+                            .eq_ignore_lock(&event.modifierstate)
+                            && self.clients.contains(&event.window) =>
+                    {
+                        //self.start_move_resize_window(event)
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
-            2 => {
-                self.clients.toggle_floating(&event.subwindow);
+            }
+            MouseButton::Middle => {
+                self.clients.toggle_floating(&event.window);
                 self.arrange_clients();
             }
             _ => {}
@@ -773,23 +807,11 @@ impl WindowManager {
     }
 }
 
-impl KeyBinding {
-    fn new<F>(key: KeyOrButton, closure: F) -> Self
-    where
-        F: Fn(&mut WindowManager, &XKeyEvent) + 'static,
-    {
-        Self {
-            key,
-            closure: Rc::new(closure),
-        }
-    }
-}
-
 impl Default for WMConfig {
     fn default() -> Self {
         Self {
             num_virtualscreens: 10,
-            mod_key: Mod4Mask,
+            mod_key: ModifierKey::Super,
             gap: Some(2),
         }
     }

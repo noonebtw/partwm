@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 use log::{debug, error, info, trace, warn};
 use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
@@ -67,7 +69,8 @@ fn main() {
 
     log_prologue();
 
-    state::WindowManager::new(WMConfig::default()).run();
+    state::WindowManager::<backends::xlib::XLib>::new(WMConfig::default())
+        .run();
 }
 
 fn log_prologue() {
