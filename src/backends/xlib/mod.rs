@@ -303,8 +303,8 @@ impl TryFrom<XEvent> for XLibWindowEvent {
                 let ev = unsafe { &event.configure_request };
                 Ok(Self::ConfigureEvent(ConfigureEvent {
                     window: ev.window,
-                    position: [ev.x, ev.y],
-                    size: [ev.width, ev.height],
+                    position: (ev.x, ev.y).into(),
+                    size: (ev.width, ev.height).into(),
                 }))
             }
             xlib::EnterNotify => {
@@ -315,6 +315,8 @@ impl TryFrom<XEvent> for XLibWindowEvent {
                 let ev = unsafe { &event.destroy_window };
                 Ok(Self::DestroyEvent(DestroyEvent { window: ev.window }))
             }
+            // both ButtonPress and ButtonRelease use the XButtonEvent structure, aliased as either
+            // XButtonReleasedEvent or XButtonPressedEvent
             xlib::ButtonPress | xlib::ButtonRelease => {
                 let ev = unsafe { &event.button };
                 let keycode = xev_to_mouse_button(ev).unwrap();
@@ -327,9 +329,10 @@ impl TryFrom<XEvent> for XLibWindowEvent {
                 let modifierstate = ModifierState::empty();
 
                 Ok(Self::ButtonEvent(ButtonEvent::new(
-                    ev.window,
+                    ev.subwindow,
                     state,
                     keycode,
+                    (ev.x, ev.y).into(),
                     modifierstate,
                 )))
             }

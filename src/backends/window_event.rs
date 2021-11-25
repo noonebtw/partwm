@@ -128,11 +128,49 @@ impl<Window> KeyEvent<Window> {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+pub struct Point<I>
+where
+    I: Copy + Clone + PartialEq + PartialOrd,
+{
+    pub x: I,
+    pub y: I,
+}
+impl<I> From<(I, I)> for Point<I>
+where
+    I: Copy + Clone + PartialEq + PartialOrd,
+{
+    fn from(value: (I, I)) -> Self {
+        Self::from_tuple(value)
+    }
+}
+
+impl<I> Point<I>
+where
+    I: Copy + Clone + PartialEq + PartialOrd,
+{
+    pub fn new(x: I, y: I) -> Self {
+        Self { x, y }
+    }
+
+    pub fn from_tuple(tuple: (I, I)) -> Self {
+        Self {
+            x: tuple.0,
+            y: tuple.1,
+        }
+    }
+
+    pub fn as_tuple(&self) -> (I, I) {
+        (self.x, self.y)
+    }
+}
+
 #[derive(Debug)]
 pub struct ButtonEvent<Window> {
     pub window: Window,
     pub state: KeyState,
     pub keycode: MouseButton,
+    pub cursor_position: Point<i32>,
     pub modifierstate: ModifierState,
 }
 
@@ -141,12 +179,14 @@ impl<Window> ButtonEvent<Window> {
         window: Window,
         state: KeyState,
         keycode: MouseButton,
+        cursor_position: Point<i32>,
         modifierstate: ModifierState,
     ) -> Self {
         Self {
             window,
             state,
             keycode,
+            cursor_position,
             modifierstate,
         }
     }
@@ -154,12 +194,12 @@ impl<Window> ButtonEvent<Window> {
 
 #[derive(Debug)]
 pub struct MotionEvent<Window> {
-    pub position: [i32; 2],
+    pub position: Point<i32>,
     pub window: Window,
 }
 
 impl<Window> MotionEvent<Window> {
-    pub fn new(position: [i32; 2], window: Window) -> Self {
+    pub fn new(position: Point<i32>, window: Window) -> Self {
         Self { position, window }
     }
 }
@@ -193,12 +233,12 @@ impl<Window> DestroyEvent<Window> {
 #[derive(Debug)]
 pub struct CreateEvent<Window> {
     pub window: Window,
-    pub position: [i32; 2],
-    pub size: [i32; 2],
+    pub position: Point<i32>,
+    pub size: Point<i32>,
 }
 
 impl<Window> CreateEvent<Window> {
-    pub fn new(window: Window, position: [i32; 2], size: [i32; 2]) -> Self {
+    pub fn new(window: Window, position: Point<i32>, size: Point<i32>) -> Self {
         Self {
             window,
             position,
@@ -210,12 +250,12 @@ impl<Window> CreateEvent<Window> {
 #[derive(Debug)]
 pub struct ConfigureEvent<Window> {
     pub window: Window,
-    pub position: [i32; 2],
-    pub size: [i32; 2],
+    pub position: Point<i32>,
+    pub size: Point<i32>,
 }
 
 impl<Window> ConfigureEvent<Window> {
-    pub fn new(window: Window, position: [i32; 2], size: [i32; 2]) -> Self {
+    pub fn new(window: Window, position: Point<i32>, size: Point<i32>) -> Self {
         Self {
             window,
             position,

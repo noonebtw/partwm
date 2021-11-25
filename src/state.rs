@@ -2,10 +2,7 @@ use std::rc::Rc;
 
 use log::{error, info};
 
-use x11::xlib::{
-    self, Window, XButtonPressedEvent, XButtonReleasedEvent, XEvent, XKeyEvent,
-    XMotionEvent,
-};
+use x11::xlib::{self, Window, XEvent, XKeyEvent, XMotionEvent};
 use xlib::{
     XConfigureRequestEvent, XCrossingEvent, XDestroyWindowEvent,
     XMapRequestEvent, XUnmapEvent,
@@ -15,7 +12,8 @@ use crate::{
     backends::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
-            ButtonEvent, KeyBind, KeyEvent, ModifierKey, ModifierState,
+            ButtonEvent, KeyBind, KeyEvent, KeyState, ModifierKey,
+            ModifierState,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -661,18 +659,18 @@ where
     }
 
     /// ensure event.subwindow refers to a valid client.
-    fn start_move_resize_window(&mut self, event: &XButtonPressedEvent) {
-        let window = event.subwindow;
+    fn start_move_resize_window(&mut self, event: &ButtonEvent<B::Window>) {
+        let window = event.window; // xev.subwindow
 
-        match event.button {
-            1 => {
+        match event.keycode {
+            MouseButton::Left => {
                 if self.clients.set_floating(&window) {
                     self.arrange_clients();
                 }
 
                 self.move_resize_window = MoveResizeInfo::Move(MoveInfoInner {
                     window,
-                    starting_cursor_pos: (event.x, event.y),
+                    starting_cursor_pos: event.cursor_position.as_tuple(),
                     starting_window_pos: self
                         .clients
                         .get(&window)
@@ -680,7 +678,7 @@ where
                         .position,
                 });
             }
-            3 => {
+            MouseButton::Right => {
                 if self.clients.set_floating(&window) {
                     self.arrange_clients();
                 }
@@ -709,13 +707,17 @@ where
         }
     }
 
-    fn end_move_resize_window(&mut self, event: &XButtonReleasedEvent) {
-        if event.button == 1 || event.button == 3 {
-            self.move_resize_window = MoveResizeInfo::None;
-        }
-        if event.button == 3 {
-            // TODO fix backend cursor api
-            //self.xlib.release_cursor();
+    fn end_move_resize_window(&mut self, event: &ButtonEvent<B::Window>) {
+        match event.keycode {
+            MouseButton::Left => {
+                self.move_resize_window = MoveResizeInfo::None;
+            }
+            MouseButton::Right => {
+                self.move_resize_window = MoveResizeInfo::None;
+                // TODO fix backend cursor api
+                //self.xlib.release_cursor();
+            }
+            _ => {}
         }
     }
 
@@ -759,36 +761,39 @@ where
         }
     }
 
-    fn button_press(&mut self, event: &ButtonEvent<B::Window>) {
-        self.focus_client(&event.window, true);
+    fn button_event(&mut self, event: &ButtonEvent<B::Window>) {
+        match event.state {
+            KeyState::Pressed => {
+                self.focus_client(&event.window, true);
 
-        match event.keycode {
-            MouseButton::Left | MouseButton::Right => {
-                match self.move_resize_window {
-                    MoveResizeInfo::None
-                        if ModifierState::from([self.config.mod_key])
-                            .eq_ignore_lock(&event.modifierstate)
-                            && self.clients.contains(&event.window) =>
-                    {
-                        //self.start_move_resize_window(event)
+                match event.keycode {
+                    MouseButton::Left | MouseButton::Right => {
+                        match self.move_resize_window {
+                            MoveResizeInfo::None
+                                if ModifierState::from([self
+                                    .config
+                                    .mod_key])
+                                .eq_ignore_lock(&event.modifierstate)
+                                    && self.clients.contains(&event.window) =>
+                            {
+                                self.start_move_resize_window(event)
+                            }
+                            _ => {}
+                        }
+                    }
+                    MouseButton::Middle => {
+                        self.clients.toggle_floating(&event.window);
+                        self.arrange_clients();
                     }
                     _ => {}
                 }
             }
-            MouseButton::Middle => {
-                self.clients.toggle_floating(&event.window);
-                self.arrange_clients();
-            }
-            _ => {}
-        }
-    }
-
-    fn button_release(&mut self, event: &XButtonReleasedEvent) {
-        match self.move_resize_window {
-            MoveResizeInfo::None => {}
-            _ => {
-                self.end_move_resize_window(event);
-            }
+            KeyState::Released => match self.move_resize_window {
+                MoveResizeInfo::None => {}
+                _ => {
+                    self.end_move_resize_window(event);
+                }
+            },
         }
     }
 
