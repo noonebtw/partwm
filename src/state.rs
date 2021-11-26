@@ -13,7 +13,7 @@ use crate::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
             ButtonEvent, KeyBind, KeyEvent, KeyState, ModifierKey,
-            ModifierState,
+            ModifierState, Point,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -59,14 +59,14 @@ enum MoveResizeInfo {
 
 struct MoveInfoInner {
     window: Window,
-    starting_cursor_pos: (i32, i32),
-    starting_window_pos: (i32, i32),
+    starting_cursor_pos: Point<i32>,
+    starting_window_pos: Point<i32>,
 }
 
 struct ResizeInfoInner {
     window: Window,
-    starting_cursor_pos: (i32, i32),
-    starting_window_size: (i32, i32),
+    starting_cursor_pos: Point<i32>,
+    starting_window_size: Point<i32>,
 }
 
 #[derive(Clone)]
@@ -97,7 +97,7 @@ where
     B: WindowServerBackend<Window = xlib::Window>,
 {
     pub fn new(config: WMConfig) -> Self {
-        let backend = B::new();
+        let backend = B::build();
 
         let clients = ClientState::new()
             .with_virtualscreens(config.num_virtualscreens)
@@ -600,7 +600,9 @@ where
         {
             Client::new_transient(
                 window,
-                self.backend.get_window_size(window).unwrap_or((100, 100)),
+                self.backend
+                    .get_window_size(window)
+                    .unwrap_or((100, 100).into()),
                 transient_window,
             )
         } else {
@@ -670,7 +672,7 @@ where
 
                 self.move_resize_window = MoveResizeInfo::Move(MoveInfoInner {
                     window,
-                    starting_cursor_pos: event.cursor_position.as_tuple(),
+                    starting_cursor_pos: event.cursor_position,
                     starting_window_pos: self
                         .clients
                         .get(&window)
@@ -687,8 +689,8 @@ where
 
                 let corner_pos = {
                     (
-                        client.position.0 + client.size.0,
-                        client.position.1 + client.size.1,
+                        client.position.x + client.size.x,
+                        client.position.y + client.size.y,
                     )
                 };
 
@@ -699,7 +701,7 @@ where
                 self.move_resize_window =
                     MoveResizeInfo::Resize(ResizeInfoInner {
                         window,
-                        starting_cursor_pos: corner_pos,
+                        starting_cursor_pos: corner_pos.into(),
                         starting_window_size: client.size,
                     });
             }
@@ -725,8 +727,8 @@ where
         match &self.move_resize_window {
             MoveResizeInfo::Move(info) => {
                 let (x, y) = (
-                    event.x - info.starting_cursor_pos.0,
-                    event.y - info.starting_cursor_pos.1,
+                    event.x - info.starting_cursor_pos.x,
+                    event.y - info.starting_cursor_pos.y,
                 );
 
                 if let Some(client) =
@@ -734,16 +736,16 @@ where
                 {
                     let position = &mut client.position;
 
-                    position.0 = info.starting_window_pos.0 + x;
-                    position.1 = info.starting_window_pos.1 + y;
+                    position.x = info.starting_window_pos.x + x;
+                    position.y = info.starting_window_pos.y + y;
 
                     self.backend.move_window(client.window, client.position);
                 }
             }
             MoveResizeInfo::Resize(info) => {
                 let (x, y) = (
-                    event.x - info.starting_cursor_pos.0,
-                    event.y - info.starting_cursor_pos.1,
+                    event.x - info.starting_cursor_pos.x,
+                    event.y - info.starting_cursor_pos.y,
                 );
 
                 if let Some(client) =
@@ -751,8 +753,8 @@ where
                 {
                     let size = &mut client.size;
 
-                    size.0 = std::cmp::max(1, info.starting_window_size.0 + x);
-                    size.1 = std::cmp::max(1, info.starting_window_size.1 + y);
+                    size.x = std::cmp::max(1, info.starting_window_size.x + x);
+                    size.y = std::cmp::max(1, info.starting_window_size.y + y);
 
                     self.backend.resize_window(client.window, client.size);
                 }
