@@ -1,16 +1,17 @@
 use super::{
     window_event,
-    window_event::{KeyBind, Point},
+    window_event::{KeyBind, MouseBind, Point},
 };
 
 pub trait WindowServerBackend {
     type Window;
 
-    fn new() -> Self;
+    fn build() -> Self;
 
     fn next_event(&mut self) -> window_event::WindowEvent<Self::Window>;
     fn handle_event(&mut self, event: window_event::WindowEvent<Self::Window>);
 
+    /// adds a keybind to the specified `window`, or globally if `window` is `None`.
     fn add_keybind(&mut self, keybind: KeyBind, window: Option<Self::Window>);
     fn remove_keybind(
         &mut self,
@@ -18,10 +19,14 @@ pub trait WindowServerBackend {
         window: Option<Self::Window>,
     );
 
-    fn add_mousebind(&mut self, keybind: KeyBind, window: Option<Self::Window>);
+    fn add_mousebind(
+        &mut self,
+        keybind: MouseBind,
+        window: Option<Self::Window>,
+    );
     fn remove_mousebind(
         &mut self,
-        keybind: KeyBind,
+        keybind: MouseBind,
         window: Option<Self::Window>,
     );
 

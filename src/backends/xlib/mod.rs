@@ -1,10 +1,6 @@
 #![allow(unused_variables, dead_code)]
 use log::{error, warn};
-use std::{
-    convert::{TryFrom, TryInto},
-    ffi::CString,
-    rc::Rc,
-};
+use std::{ffi::CString, rc::Rc};
 
 use thiserror::Error;
 
@@ -20,7 +16,7 @@ use super::{
     keycodes::VirtualKeyCode,
     window_event::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyState,
-        MapEvent, ModifierState, UnmapEvent, WindowEvent,
+        MapEvent, ModifierState, Point, UnmapEvent, WindowEvent,
     },
     WindowServerBackend,
 };
@@ -150,6 +146,54 @@ impl Drop for XLib {
 }
 
 impl XLib {
+    fn new() -> Self {
+        let (display, screen, root) = {
+            let display = unsafe { xlib::XOpenDisplay(std::ptr::null()) };
+            assert_eq!(display, std::ptr::null_mut());
+            let screen = unsafe { xlib::XDefaultScreen(display) };
+            let root = unsafe { xlib::XRootWindow(display, screen) };
+
+            let display = Display::new(display);
+
+            (display, screen, root)
+        };
+
+        let atoms = XLibAtoms::init(display.clone());
+
+        Self {
+            display,
+            screen,
+            root,
+            modifier_state: ModifierState::empty(),
+            atoms,
+            keybinds: Vec::new(),
+        }
+    }
+
+    unsafe fn init_as_wm(&self) {
+        let mut window_attributes =
+            std::mem::MaybeUninit::<xlib::XSetWindowAttributes>::zeroed()
+                .assume_init();
+
+        window_attributes.event_mask = xlib::SubstructureRedirectMask
+            | xlib::StructureNotifyMask
+            | xlib::SubstructureNotifyMask
+            | xlib::EnterWindowMask
+            | xlib::PointerMotionMask
+            | xlib::ButtonPressMask;
+
+        xlib::XChangeWindowAttributes(
+            self.dpy(),
+            self.root,
+            xlib::CWEventMask,
+            &mut window_attributes,
+        );
+
+        xlib::XSelectInput(self.dpy(), self.root, window_attributes.event_mask);
+        xlib::XSetErrorHandler(Some(xlib_error_handler));
+        xlib::XSync(self.dpy(), 0);
+    }
+
     fn dpy(&self) -> *mut xlib::Display {
         self.display.get()
     }
@@ -178,6 +222,84 @@ impl XLib {
         }
 
         event
+    }
+
+    fn xevent_to_window_event(&self, event: XEvent) -> Option<XLibWindowEvent> {
+        match event.get_type() {
+            xlib::MapRequest => {
+                let ev = unsafe { &event.map_request };
+                Some(XLibWindowEvent::MapRequestEvent(MapEvent {
+                    window: ev.window,
+                }))
+            }
+            xlib::UnmapNotify => {
+                let ev = unsafe { &event.unmap };
+                Some(XLibWindowEvent::UnmapEvent(UnmapEvent {
+                    window: ev.window,
+                }))
+            }
+            xlib::ConfigureRequest => {
+                let ev = unsafe { &event.configure_request };
+                Some(XLibWindowEvent::ConfigureEvent(ConfigureEvent {
+                    window: ev.window,
+                    position: (ev.x, ev.y).into(),
+                    size: (ev.width, ev.height).into(),
+                }))
+            }
+            xlib::EnterNotify => {
+                let ev = unsafe { &event.crossing };
+                Some(XLibWindowEvent::EnterEvent(EnterEvent {
+                    window: ev.window,
+                }))
+            }
+            xlib::DestroyNotify => {
+                let ev = unsafe { &event.destroy_window };
+                Some(XLibWindowEvent::DestroyEvent(DestroyEvent {
+                    window: ev.window,
+                }))
+            }
+            // both ButtonPress and ButtonRelease use the XButtonEvent structure, aliased as either
+            // XButtonReleasedEvent or XButtonPressedEvent
+            xlib::ButtonPress | xlib::ButtonRelease => {
+                let ev = unsafe { &event.button };
+                let keycode = xev_to_mouse_button(ev).unwrap();
+                let state = if ev.state as i32 == xlib::ButtonPress {
+                    KeyState::Pressed
+                } else {
+                    KeyState::Released
+                };
+
+                let modifierstate = ModifierState::empty();
+
+                Some(XLibWindowEvent::ButtonEvent(ButtonEvent::new(
+                    ev.subwindow,
+                    state,
+                    keycode,
+                    (ev.x, ev.y).into(),
+                    modifierstate,
+                )))
+            }
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn get_window_attributes(
+        &self,
+        window: xlib::Window,
+    ) -> Option<xlib::XWindowAttributes> {
+        let mut wa = unsafe {
+            std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
+                .assume_init()
+        };
+
+        if unsafe {
+            xlib::XGetWindowAttributes(self.dpy(), window, &mut wa) != 0
+        } {
+            Some(wa)
+        } else {
+            None
+        }
     }
 
     fn check_for_protocol(
@@ -286,70 +408,29 @@ impl XLib {
     }
 }
 
-impl TryFrom<XEvent> for XLibWindowEvent {
-    type Error = crate::error::Error;
-
-    fn try_from(event: XEvent) -> Result<Self, Self::Error> {
-        match event.get_type() {
-            xlib::MapRequest => {
-                let ev = unsafe { &event.map_request };
-                Ok(Self::MapRequestEvent(MapEvent { window: ev.window }))
-            }
-            xlib::UnmapNotify => {
-                let ev = unsafe { &event.unmap };
-                Ok(Self::UnmapEvent(UnmapEvent { window: ev.window }))
-            }
-            xlib::ConfigureRequest => {
-                let ev = unsafe { &event.configure_request };
-                Ok(Self::ConfigureEvent(ConfigureEvent {
-                    window: ev.window,
-                    position: (ev.x, ev.y).into(),
-                    size: (ev.width, ev.height).into(),
-                }))
-            }
-            xlib::EnterNotify => {
-                let ev = unsafe { &event.crossing };
-                Ok(Self::EnterEvent(EnterEvent { window: ev.window }))
-            }
-            xlib::DestroyNotify => {
-                let ev = unsafe { &event.destroy_window };
-                Ok(Self::DestroyEvent(DestroyEvent { window: ev.window }))
-            }
-            // both ButtonPress and ButtonRelease use the XButtonEvent structure, aliased as either
-            // XButtonReleasedEvent or XButtonPressedEvent
-            xlib::ButtonPress | xlib::ButtonRelease => {
-                let ev = unsafe { &event.button };
-                let keycode = xev_to_mouse_button(ev).unwrap();
-                let state = if ev.state as i32 == xlib::ButtonPress {
-                    KeyState::Pressed
-                } else {
-                    KeyState::Released
-                };
-
-                let modifierstate = ModifierState::empty();
-
-                Ok(Self::ButtonEvent(ButtonEvent::new(
-                    ev.subwindow,
-                    state,
-                    keycode,
-                    (ev.x, ev.y).into(),
-                    modifierstate,
-                )))
-            }
-            _ => Err(Self::Error::UnknownEvent),
-        }
-    }
-}
-
 impl WindowServerBackend for XLib {
     type Window = xlib::Window;
 
+    fn build() -> Self {
+        let xlib = Self::new();
+        unsafe { xlib.init_as_wm() };
+        xlib
+    }
+
     fn next_event(&mut self) -> super::window_event::WindowEvent<Self::Window> {
         std::iter::from_fn(|| {
-            TryInto::<XLibWindowEvent>::try_into(self.next_xevent()).ok()
+            let ev = self.next_xevent();
+            self.xevent_to_window_event(ev)
         })
         .next()
         .unwrap()
+    }
+
+    fn handle_event(
+        &mut self,
+        event: super::window_event::WindowEvent<Self::Window>,
+    ) {
+        todo!()
     }
 
     fn add_keybind(
@@ -370,7 +451,7 @@ impl WindowServerBackend for XLib {
 
     fn add_mousebind(
         &mut self,
-        keybind: super::window_event::KeyBind,
+        keybind: super::window_event::MouseBind,
         window: Option<Self::Window>,
     ) {
         todo!()
@@ -378,43 +459,76 @@ impl WindowServerBackend for XLib {
 
     fn remove_mousebind(
         &mut self,
-        keybind: super::window_event::KeyBind,
+        keybind: super::window_event::MouseBind,
         window: Option<Self::Window>,
     ) {
         todo!()
     }
 
     fn focus_window(&self, window: Self::Window) {
-        todo!()
+        unsafe {
+            xlib::XSetInputFocus(
+                self.dpy(),
+                window,
+                xlib::RevertToPointerRoot,
+                xlib::CurrentTime,
+            );
+
+            // TODO: make painting the window border a seperate function, and configurable
+            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+
+            if let Some(screen) = screen {
+                xlib::XSetWindowBorder(self.dpy(), window, screen.white_pixel);
+            }
+
+            xlib::XChangeProperty(
+                self.dpy(),
+                self.root,
+                self.atoms.wm_active_window,
+                xlib::XA_WINDOW,
+                32,
+                xlib::PropModeReplace,
+                &window as *const u64 as *const _,
+                1,
+            );
+        }
+
+        self.send_protocol(window, self.atoms.wm_take_focus);
     }
 
     fn unfocus_window(&self, window: Self::Window) {
-        todo!()
+        unsafe {
+            xlib::XSetInputFocus(
+                self.dpy(),
+                self.root,
+                xlib::RevertToPointerRoot,
+                xlib::CurrentTime,
+            );
+
+            // TODO: make painting the window border a seperate function, and configurable
+            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+
+            if let Some(screen) = screen {
+                xlib::XSetWindowBorder(self.dpy(), window, screen.black_pixel);
+            }
+
+            xlib::XDeleteProperty(
+                self.dpy(),
+                self.root,
+                self.atoms.wm_active_window,
+            );
+        }
     }
 
-    fn move_window(&self, window: Self::Window, new_pos: (i32, i32)) {
-        todo!()
-    }
-
-    fn resize_window(&self, window: Self::Window, new_pos: (i32, i32)) {
-        todo!()
+    fn raise_window(&self, window: Self::Window) {
+        unsafe {
+            xlib::XRaiseWindow(self.dpy(), window);
+        }
     }
 
     fn hide_window(&self, window: Self::Window) {
-        todo!()
-    }
-
-    fn screen_size(&self) -> (i32, i32) {
-        unsafe {
-            let mut wa =
-                std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed();
-
-            xlib::XGetWindowAttributes(self.dpy(), self.root, wa.as_mut_ptr());
-
-            let wa = wa.assume_init();
-
-            (wa.width, wa.height)
-        }
+        let screen_size = self.screen_size();
+        self.move_window(window, screen_size);
     }
 
     fn kill_window(&self, window: Self::Window) {
@@ -426,20 +540,69 @@ impl WindowServerBackend for XLib {
         todo!()
     }
 
-    fn raise_window(&self, window: Self::Window) {
-        todo!()
-    }
-
     fn get_parent_window(&self, window: Self::Window) -> Option<Self::Window> {
-        todo!()
+        let mut parent_window: Self::Window = 0;
+        if unsafe {
+            xlib::XGetTransientForHint(self.dpy(), window, &mut parent_window)
+                != 0
+        } {
+            Some(parent_window)
+        } else {
+            None
+        }
     }
 
-    fn get_window_size(&self, window: Self::Window) -> Option<(i32, i32)> {
-        todo!()
+    fn configure_window(
+        &self,
+        window: Self::Window,
+        new_size: Option<super::window_event::Point<i32>>,
+        new_pos: Option<super::window_event::Point<i32>>,
+    ) {
+        let position = new_pos.unwrap_or(Point::new(0, 0));
+        let size = new_size.unwrap_or(Point::new(0, 0));
+        let mut wc = xlib::XWindowChanges {
+            x: position.x,
+            y: position.y,
+            width: size.x,
+            height: size.y,
+            border_width: 0,
+            sibling: 0,
+            stack_mode: 0,
+        };
+
+        let mask = {
+            let mut mask = 0;
+            if new_pos.is_some() {
+                mask |= xlib::CWX | xlib::CWY;
+            }
+            if new_size.is_some() {
+                mask |= xlib::CWWidth | xlib::CWHeight;
+            }
+
+            u32::from(mask)
+        };
+
+        unsafe {
+            xlib::XConfigureWindow(self.dpy(), window, mask, &mut wc);
+        }
     }
 
-    fn new() -> Self {
-        todo!()
+    fn screen_size(&self) -> Point<i32> {
+        unsafe {
+            let mut wa =
+                std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed();
+
+            xlib::XGetWindowAttributes(self.dpy(), self.root, wa.as_mut_ptr());
+
+            let wa = wa.assume_init();
+
+            (wa.width, wa.height).into()
+        }
+    }
+
+    fn get_window_size(&self, window: Self::Window) -> Option<Point<i32>> {
+        self.get_window_attributes(window)
+            .map(|wa| (wa.width, wa.height).into())
     }
 }
 
