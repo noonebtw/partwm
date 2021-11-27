@@ -8,7 +8,10 @@ use x11::xlib::{
     self, Atom, KeyPress, KeyRelease, Window, XEvent, XInternAtom, XKeyEvent,
 };
 
-use crate::backends::window_event::ModifierKey;
+use crate::backends::{
+    keycodes::KeyOrButton, window_event::ModifierKey,
+    xlib::keysym::mouse_button_to_xbutton,
+};
 
 use self::keysym::{virtual_keycode_to_keysym, xev_to_mouse_button, XKeySym};
 
@@ -391,6 +394,88 @@ impl XLib {
         }
     }
 
+    fn get_numlock_mask(&self) -> Option<u32> {
+        unsafe {
+            let modmap = xlib::XGetModifierMapping(self.dpy());
+            let max_keypermod = (*modmap).max_keypermod;
+
+            for i in 0..8 {
+                for j in 0..max_keypermod {
+                    if *(*modmap)
+                        .modifiermap
+                        .offset((i * max_keypermod + j) as isize)
+                        == xlib::XKeysymToKeycode(
+                            self.dpy(),
+                            x11::keysym::XK_Num_Lock as u64,
+                        )
+                    {
+                        return Some(1 << i);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn grab_key_or_button(
+        &self,
+        window: xlib::Window,
+        key: KeyOrButton,
+        modifiers: ModifierState,
+    ) {
+        let modmask = modifiers.as_modmask(self);
+
+        let numlock_mask = self
+            .get_numlock_mask()
+            .expect("failed to query numlock mask.");
+
+        let modifiers = vec![
+            0,
+            xlib::LockMask,
+            numlock_mask,
+            xlib::LockMask | numlock_mask,
+        ];
+
+        let keycode = match key {
+            KeyOrButton::Key(key) => self.vk_to_keycode(key),
+            KeyOrButton::Button(button) => mouse_button_to_xbutton(button),
+        };
+
+        for modifier in modifiers.iter() {
+            match key {
+                KeyOrButton::Key(_) => unsafe {
+                    xlib::XGrabKey(
+                        self.dpy(),
+                        keycode,
+                        modmask | modifier,
+                        window,
+                        1,
+                        xlib::GrabModeAsync,
+                        xlib::GrabModeAsync,
+                    );
+                },
+                KeyOrButton::Button(_) => unsafe {
+                    xlib::XGrabButton(
+                        self.dpy(),
+                        keycode as u32,
+                        modmask | modifier,
+                        window,
+                        1,
+                        (xlib::ButtonPressMask
+                            | xlib::ButtonReleaseMask
+                            | xlib::PointerMotionMask)
+                            as u32,
+                        xlib::GrabModeAsync,
+                        xlib::GrabModeAsync,
+                        0,
+                        0,
+                    );
+                },
+            }
+        }
+    }
+
     fn vk_to_keycode(&self, vk: VirtualKeyCode) -> i32 {
         unsafe {
             xlib::XKeysymToKeycode(
@@ -405,6 +490,31 @@ impl XLib {
             unsafe { xlib::XLookupKeysym(ev as *const _ as *mut _, 0) };
 
         XKeySym::new(keysym as u32)
+    }
+
+    fn modifier_state_to_modmask(&self) {}
+}
+
+trait ModifierStateExt {
+    fn as_modmask(&self, xlib: &XLib) -> u32;
+}
+
+impl ModifierStateExt for ModifierState {
+    fn as_modmask(&self, xlib: &XLib) -> u32 {
+        let bits = self.bits();
+        let mut mask = 0;
+        let numlock_mask = xlib
+            .get_numlock_mask()
+            .expect("failed to query numlock mask");
+
+        mask &= xlib::ShiftMask & !u32::from(self.contains(Self::SHIFT));
+        mask &= xlib::LockMask & !u32::from(self.contains(Self::SHIFT_LOCK));
+        mask &= xlib::ControlMask & !u32::from(self.contains(Self::CONTROL));
+        mask &= xlib::Mod1Mask & !u32::from(self.contains(Self::ALT));
+        mask &= xlib::Mod4Mask & !u32::from(self.contains(Self::SUPER));
+        mask &= numlock_mask & !u32::from(self.contains(Self::NUM_LOCK));
+
+        mask
     }
 }
 
@@ -438,7 +548,11 @@ impl WindowServerBackend for XLib {
         keybind: super::window_event::KeyBind,
         window: Option<Self::Window>,
     ) {
-        todo!()
+        self.grab_key_or_button(
+            window.unwrap_or(self.root),
+            KeyOrButton::Key(keybind.key),
+            keybind.modifiers,
+        );
     }
 
     fn remove_keybind(
@@ -454,7 +568,11 @@ impl WindowServerBackend for XLib {
         keybind: super::window_event::MouseBind,
         window: Option<Self::Window>,
     ) {
-        todo!()
+        self.grab_key_or_button(
+            window.unwrap_or(self.root),
+            KeyOrButton::Button(keybind.button),
+            keybind.modifiers,
+        );
     }
 
     fn remove_mousebind(

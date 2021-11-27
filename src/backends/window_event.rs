@@ -281,8 +281,8 @@ impl<Window> FullscreenEvent<Window> {
 
 #[derive(Debug, Clone)]
 pub struct KeyBind {
-    key: VirtualKeyCode,
-    modifiers: ModifierState,
+    pub key: VirtualKeyCode,
+    pub modifiers: ModifierState,
 }
 
 impl KeyBind {
@@ -300,6 +300,6 @@ impl KeyBind {
 }
 
 pub struct MouseBind {
-    button: MouseButton,
-    modifiers: ModifierState,
+    pub button: MouseButton,
+    pub modifiers: ModifierState,
 }

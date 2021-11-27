@@ -1,6 +1,12 @@
 #![allow(dead_code)]
 
 #[derive(Debug, Hash, Ord, PartialOrd, PartialEq, Eq, Clone, Copy)]
+pub enum KeyOrButton {
+    Key(VirtualKeyCode),
+    Button(MouseButton),
+}
+
+#[derive(Debug, Hash, Ord, PartialOrd, PartialEq, Eq, Clone, Copy)]
 pub enum MouseButton {
     Left,
     Middle,
