@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use log::{error, info};
 
-use x11::xlib::{self, Window, XEvent, XKeyEvent, XMotionEvent};
+use x11::xlib::{self, Window, XEvent, XMotionEvent};
 use xlib::{
     XConfigureRequestEvent, XCrossingEvent, XDestroyWindowEvent,
     XMapRequestEvent, XUnmapEvent,
@@ -13,7 +13,7 @@ use crate::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
             ButtonEvent, KeyBind, KeyEvent, KeyState, ModifierKey,
-            ModifierState, Point,
+            ModifierState, Point, WindowEvent,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -37,7 +37,7 @@ where
 {
     clients: ClientState,
     move_resize_window: MoveResizeInfo,
-    keybinds: Vec<KeyBinding<B>>,
+    keybinds: Rc<RefCell<Vec<KeyBinding<B>>>>,
     backend: B,
 
     config: WMConfig,
@@ -69,7 +69,10 @@ struct ResizeInfoInner {
     starting_window_size: Point<i32>,
 }
 
-#[derive(Clone)]
+use derivative::*;
+
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 struct KeyBinding<B: WindowServerBackend> {
     key: KeyBind,
     closure: Rc<dyn Fn(&mut WindowManager<B>, &KeyEvent<B::Window>)>,
@@ -108,7 +111,7 @@ where
         Self {
             clients,
             move_resize_window: MoveResizeInfo::None,
-            keybinds: Vec::new(),
+            keybinds: Rc::new(RefCell::new(Vec::new())),
             backend,
             config,
         }
@@ -254,7 +257,7 @@ where
 
     fn add_keybind(&mut self, keybind: KeyBinding<B>) {
         //self.xlib.add_global_keybind(keybind.key);
-        self.keybinds.push(keybind);
+        self.keybinds.borrow_mut().push(keybind);
     }
 
     fn add_vs_switch_keybinds(&mut self) {
@@ -358,6 +361,14 @@ where
             let event = self.backend.next_event();
 
             match event {
+                WindowEvent::KeyEvent(event @ KeyEvent { window, .. }) => {
+                    self.handle_keybinds(&event);
+                }
+                WindowEvent::ButtonEvent(
+                    event @ ButtonEvent { window, .. },
+                ) => {
+                    self.button_event(&event);
+                }
                 // xlib::MapRequest => self.map_request(&event),
                 // xlib::UnmapNotify => self.unmap_notify(&event),
                 // xlib::ConfigureRequest => self.configure_request(&event),
@@ -385,7 +396,16 @@ where
     }
 
     // TODO: change this somehow cuz I'm not a big fan of this "hardcoded" keybind stuff
-    fn handle_keybinds(&mut self, event: &XKeyEvent) {
+    fn handle_keybinds(&mut self, event: &KeyEvent<B::Window>) {
+        let keybinds = self.keybinds.clone();
+
+        for kb in keybinds.borrow().iter() {
+            if kb.key.key == event.keycode
+                && kb.key.modifiers == event.modifierstate
+            {
+                kb.call(self, event);
+            }
+        }
         //let clean_mask = self.xlib.get_clean_mask();
         // TODO: Fix this
         // for kb in self.keybinds.clone().into_iter() {
@@ -775,7 +795,7 @@ where
                                 if ModifierState::from([self
                                     .config
                                     .mod_key])
-                                .eq_ignore_lock(&event.modifierstate)
+                                .eq(&event.modifierstate)
                                     && self.clients.contains(&event.window) =>
                             {
                                 self.start_move_resize_window(event)
