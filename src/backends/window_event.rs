@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::keycodes::{MouseButton, VirtualKeyCode};
+use super::keycodes::{KeyOrButton, MouseButton, VirtualKeyCode};
 use bitflags::bitflags;
 
 #[derive(Debug)]
@@ -279,7 +279,7 @@ impl<Window> FullscreenEvent<Window> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct KeyBind {
     pub key: VirtualKeyCode,
     pub modifiers: ModifierState,
@@ -299,7 +299,78 @@ impl KeyBind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MouseBind {
     pub button: MouseButton,
     pub modifiers: ModifierState,
+}
+
+impl MouseBind {
+    pub fn new(button: MouseButton) -> Self {
+        Self {
+            button,
+            modifiers: ModifierState::empty(),
+        }
+    }
+
+    pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
+        self.modifiers.set_mod(modifier_key);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct KeyOrMouseBind {
+    pub key: KeyOrButton,
+    pub modifiers: ModifierState,
+}
+
+impl KeyOrMouseBind {
+    pub fn new(key: KeyOrButton) -> Self {
+        Self {
+            key,
+            modifiers: ModifierState::empty(),
+        }
+    }
+
+    pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
+        self.modifiers.set_mod(modifier_key);
+        self
+    }
+}
+
+impl From<&KeyBind> for KeyOrMouseBind {
+    fn from(keybind: &KeyBind) -> Self {
+        Self {
+            key: KeyOrButton::Key(keybind.key),
+            modifiers: keybind.modifiers,
+        }
+    }
+}
+
+impl From<KeyBind> for KeyOrMouseBind {
+    fn from(keybind: KeyBind) -> Self {
+        Self {
+            key: KeyOrButton::Key(keybind.key),
+            modifiers: keybind.modifiers,
+        }
+    }
+}
+
+impl From<&MouseBind> for KeyOrMouseBind {
+    fn from(mousebind: &MouseBind) -> Self {
+        Self {
+            key: KeyOrButton::Button(mousebind.button),
+            modifiers: mousebind.modifiers,
+        }
+    }
+}
+
+impl From<MouseBind> for KeyOrMouseBind {
+    fn from(mousebind: MouseBind) -> Self {
+        Self {
+            key: KeyOrButton::Button(mousebind.button),
+            modifiers: mousebind.modifiers,
+        }
+    }
 }

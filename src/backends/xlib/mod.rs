@@ -18,8 +18,8 @@ use self::keysym::{virtual_keycode_to_keysym, xev_to_mouse_button, XKeySym};
 use super::{
     keycodes::VirtualKeyCode,
     window_event::{
-        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyState,
-        MapEvent, ModifierState, Point, UnmapEvent, WindowEvent,
+        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyOrMouseBind,
+        KeyState, MapEvent, ModifierState, Point, UnmapEvent, WindowEvent,
     },
     WindowServerBackend,
 };
@@ -139,7 +139,7 @@ pub struct XLib {
     root: Window,
     screen: i32,
     atoms: XLibAtoms,
-    keybinds: Vec<()>,
+    keybinds: Vec<KeyOrMouseBind>,
 }
 
 impl Drop for XLib {
@@ -420,11 +420,10 @@ impl XLib {
 
     fn grab_key_or_button(
         &self,
+        binding: &KeyOrMouseBind,
         window: xlib::Window,
-        key: KeyOrButton,
-        modifiers: ModifierState,
     ) {
-        let modmask = modifiers.as_modmask(self);
+        let modmask = binding.modifiers.as_modmask(self);
 
         let numlock_mask = self
             .get_numlock_mask()
@@ -437,13 +436,13 @@ impl XLib {
             xlib::LockMask | numlock_mask,
         ];
 
-        let keycode = match key {
+        let keycode = match binding.key {
             KeyOrButton::Key(key) => self.vk_to_keycode(key),
             KeyOrButton::Button(button) => mouse_button_to_xbutton(button),
         };
 
         for modifier in modifiers.iter() {
-            match key {
+            match binding.key {
                 KeyOrButton::Key(_) => unsafe {
                     xlib::XGrabKey(
                         self.dpy(),
@@ -473,6 +472,57 @@ impl XLib {
                     );
                 },
             }
+        }
+    }
+
+    fn ungrab_key_or_button(
+        &self,
+        binding: &KeyOrMouseBind,
+        window: xlib::Window,
+    ) {
+        let modmask = binding.modifiers.as_modmask(self);
+
+        let numlock_mask = self
+            .get_numlock_mask()
+            .expect("failed to query numlock mask.");
+
+        let modifiers = vec![
+            0,
+            xlib::LockMask,
+            numlock_mask,
+            xlib::LockMask | numlock_mask,
+        ];
+
+        let keycode = match binding.key {
+            KeyOrButton::Key(key) => self.vk_to_keycode(key),
+            KeyOrButton::Button(button) => mouse_button_to_xbutton(button),
+        };
+
+        for modifier in modifiers.iter() {
+            match binding.key {
+                KeyOrButton::Key(_) => unsafe {
+                    xlib::XUngrabKey(
+                        self.dpy(),
+                        keycode,
+                        modmask | modifier,
+                        window,
+                    );
+                },
+                KeyOrButton::Button(_) => unsafe {
+                    xlib::XUngrabButton(
+                        self.dpy(),
+                        keycode as u32,
+                        modmask | modifier,
+                        window,
+                    );
+                },
+            }
+        }
+    }
+
+    fn grab_global_keybinds(&self, window: xlib::Window) {
+        for binding in self.keybinds.iter() {
+            self.grab_key_or_button(binding, window);
         }
     }
 
@@ -538,47 +588,44 @@ impl WindowServerBackend for XLib {
         &mut self,
         event: super::window_event::WindowEvent<Self::Window>,
     ) {
-        todo!()
+        match event {
+            WindowEvent::MapRequestEvent(event) => {
+                unsafe {
+                    xlib::XMapWindow(self.dpy(), event.window);
+
+                    xlib::XSelectInput(
+                        self.dpy(),
+                        event.window,
+                        xlib::EnterWindowMask
+                            | xlib::FocusChangeMask
+                            | xlib::PropertyChangeMask
+                            | xlib::StructureNotifyMask,
+                    );
+                }
+
+                self.grab_global_keybinds(event.window);
+            }
+            WindowEvent::ConfigureEvent(event) => {
+                self.configure_window(
+                    event.window,
+                    Some(event.size),
+                    Some(event.position),
+                );
+            }
+            _ => {}
+        }
     }
 
-    fn add_keybind(
-        &mut self,
-        keybind: super::window_event::KeyBind,
-        window: Option<Self::Window>,
-    ) {
-        self.grab_key_or_button(
-            window.unwrap_or(self.root),
-            KeyOrButton::Key(keybind.key),
-            keybind.modifiers,
-        );
+    fn add_keybind(&mut self, keybind: super::window_event::KeyOrMouseBind) {
+        self.grab_key_or_button(&keybind, self.root);
+        self.keybinds.push(keybind);
     }
 
     fn remove_keybind(
         &mut self,
-        keybind: super::window_event::KeyBind,
-        window: Option<Self::Window>,
+        keybind: &super::window_event::KeyOrMouseBind,
     ) {
-        todo!()
-    }
-
-    fn add_mousebind(
-        &mut self,
-        keybind: super::window_event::MouseBind,
-        window: Option<Self::Window>,
-    ) {
-        self.grab_key_or_button(
-            window.unwrap_or(self.root),
-            KeyOrButton::Button(keybind.button),
-            keybind.modifiers,
-        );
-    }
-
-    fn remove_mousebind(
-        &mut self,
-        keybind: super::window_event::MouseBind,
-        window: Option<Self::Window>,
-    ) {
-        todo!()
+        self.keybinds.retain(|kb| kb != keybind);
     }
 
     fn focus_window(&self, window: Self::Window) {

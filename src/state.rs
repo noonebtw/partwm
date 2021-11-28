@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use log::{error, info};
 
-use x11::xlib::{self, Window, XEvent, XMotionEvent};
+use x11::xlib::{self, Window, XEvent};
 use xlib::{
     XConfigureRequestEvent, XCrossingEvent, XDestroyWindowEvent,
     XMapRequestEvent, XUnmapEvent,
@@ -12,8 +12,9 @@ use crate::{
     backends::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
-            ButtonEvent, KeyBind, KeyEvent, KeyState, ModifierKey,
-            ModifierState, Point, WindowEvent,
+            ButtonEvent, ConfigureEvent, KeyBind, KeyEvent, KeyState, MapEvent,
+            ModifierKey, ModifierState, MotionEvent, MouseBind, Point,
+            WindowEvent,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -119,22 +120,21 @@ where
     }
 
     fn init(mut self) -> Self {
-        // TODO: fix keybinds for moving windows and stuff
-        // self.xlib.add_global_keybind(KeyOrButton::button(
-        //     1,
-        //     self.config.mod_key,
-        //     ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        // ));
-        // self.xlib.add_global_keybind(KeyOrButton::button(
-        //     2,
-        //     self.config.mod_key,
-        //     ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        // ));
-        // self.xlib.add_global_keybind(KeyOrButton::button(
-        //     3,
-        //     self.config.mod_key,
-        //     ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-        // ));
+        self.backend.add_keybind(
+            MouseBind::new(MouseButton::Left)
+                .with_mod(self.config.mod_key)
+                .into(),
+        );
+        self.backend.add_keybind(
+            MouseBind::new(MouseButton::Middle)
+                .with_mod(self.config.mod_key)
+                .into(),
+        );
+        self.backend.add_keybind(
+            MouseBind::new(MouseButton::Right)
+                .with_mod(self.config.mod_key)
+                .into(),
+        );
 
         self.add_keybind(KeyBinding::new(
             KeyBind::new(VirtualKeyCode::P).with_mod(self.config.mod_key),
@@ -256,7 +256,7 @@ where
     }
 
     fn add_keybind(&mut self, keybind: KeyBinding<B>) {
-        //self.xlib.add_global_keybind(keybind.key);
+        self.backend.add_keybind((&keybind.key).into());
         self.keybinds.borrow_mut().push(keybind);
     }
 
@@ -361,23 +361,47 @@ where
             let event = self.backend.next_event();
 
             match event {
-                WindowEvent::KeyEvent(event @ KeyEvent { window, .. }) => {
+                WindowEvent::KeyEvent(event) => {
                     self.handle_keybinds(&event);
                 }
-                WindowEvent::ButtonEvent(
-                    event @ ButtonEvent { window, .. },
-                ) => {
+                WindowEvent::ButtonEvent(event) => {
                     self.button_event(&event);
                 }
-                // xlib::MapRequest => self.map_request(&event),
-                // xlib::UnmapNotify => self.unmap_notify(&event),
-                // xlib::ConfigureRequest => self.configure_request(&event),
-                // xlib::EnterNotify => self.enter_notify(&event),
+                WindowEvent::MapRequestEvent(MapEvent { window }) => {
+                    if !self.clients.contains(&window) {
+                        self.new_client(window);
+                    }
+
+                    self.backend.handle_event(event);
+                }
+                WindowEvent::UnmapEvent(event) => {
+                    self.clients.remove(&event.window);
+                    self.arrange_clients();
+                }
+                WindowEvent::EnterEvent(event) => {
+                    self.focus_client(&event.window, false);
+                }
+                WindowEvent::MotionEvent(event) => {
+                    self.do_move_resize_window(&event);
+                }
+                WindowEvent::ConfigureEvent(ConfigureEvent {
+                    window, ..
+                }) => {
+                    if !self.clients.contains(&window) {
+                        self.backend.handle_event(event);
+                    }
+                    // TODO
+                    // match self.clients.get(&event.window).into_option() {
+                    //     Some(client) => self
+                    //         .xlib
+                    //         .configure_client(client, self.clients.get_border()),
+                    //     None => self.xlib.configure_window(event),
+                    // }
+                }
+
+                // i dont think i actually have to handle destroy notify events.
+                // every window should be unmapped regardless
                 // xlib::DestroyNotify => self.destroy_notify(&event),
-                // xlib::ButtonPress => self.button_press(event.as_ref()),
-                // xlib::ButtonRelease => self.button_release(event.as_ref()),
-                // xlib::MotionNotify => self.motion_notify(event.as_ref()),
-                // xlib::KeyPress => self.handle_keybinds(event.as_ref()),
                 _ => {}
             }
         }
@@ -397,6 +421,7 @@ where
 
     // TODO: change this somehow cuz I'm not a big fan of this "hardcoded" keybind stuff
     fn handle_keybinds(&mut self, event: &KeyEvent<B::Window>) {
+        // I'm not sure if this has to be a Rc<RefCell>> or if it would be better as a Cell<>
         let keybinds = self.keybinds.clone();
 
         for kb in keybinds.borrow().iter() {
@@ -406,17 +431,6 @@ where
                 kb.call(self, event);
             }
         }
-        //let clean_mask = self.xlib.get_clean_mask();
-        // TODO: Fix this
-        // for kb in self.keybinds.clone().into_iter() {
-        //     if let KeyOrButton::Key(keycode, modmask) = kb.key {
-        //         if keycode as u32 == event.keycode
-        //             && modmask & clean_mask == event.state & clean_mask
-        //         {
-        //             (kb.closure)(self, event);
-        //         }
-        //     }
-        // }
     }
 
     fn handle_switch_stack(&mut self) {
@@ -629,11 +643,13 @@ where
             Client::new_default(window)
         };
 
+        // TODO
         //self.xlib
         //.configure_client(&client, self.clients.get_border());
         self.clients.insert(client).unwrap();
         self.arrange_clients();
 
+        // TODO
         //self.xlib.map_window(window);
 
         self.focus_client(&window, true);
@@ -666,6 +682,7 @@ where
     fn configure_request(&mut self, event: &XEvent) {
         let event: &XConfigureRequestEvent = event.as_ref();
 
+        // TODO
         // match self.clients.get(&event.window).into_option() {
         //     Some(client) => self
         //         .xlib
@@ -741,12 +758,12 @@ where
         }
     }
 
-    fn do_move_resize_window(&mut self, event: &XMotionEvent) {
+    fn do_move_resize_window(&mut self, event: &MotionEvent<B::Window>) {
         match &self.move_resize_window {
             MoveResizeInfo::Move(info) => {
                 let (x, y) = (
-                    event.x - info.starting_cursor_pos.x,
-                    event.y - info.starting_cursor_pos.y,
+                    event.position.x - info.starting_cursor_pos.x,
+                    event.position.y - info.starting_cursor_pos.y,
                 );
 
                 if let Some(client) =
@@ -762,8 +779,8 @@ where
             }
             MoveResizeInfo::Resize(info) => {
                 let (x, y) = (
-                    event.x - info.starting_cursor_pos.x,
-                    event.y - info.starting_cursor_pos.y,
+                    event.position.x - info.starting_cursor_pos.x,
+                    event.position.y - info.starting_cursor_pos.y,
                 );
 
                 if let Some(client) =
@@ -815,10 +832,6 @@ where
                 }
             },
         }
-    }
-
-    fn motion_notify(&mut self, event: &XMotionEvent) {
-        self.do_move_resize_window(event);
     }
 
     pub fn spawn(&self, command: &str, args: &[&str]) {

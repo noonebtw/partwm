@@ -1,6 +1,6 @@
 use super::{
     window_event,
-    window_event::{KeyBind, MouseBind, Point},
+    window_event::{KeyOrMouseBind, Point},
 };
 
 pub trait WindowServerBackend {
@@ -13,23 +13,9 @@ pub trait WindowServerBackend {
     fn handle_event(&mut self, event: window_event::WindowEvent<Self::Window>);
 
     /// adds a keybind to the specified `window`, or globally if `window` is `None`.
-    fn add_keybind(&mut self, keybind: KeyBind, window: Option<Self::Window>);
-    fn remove_keybind(
-        &mut self,
-        keybind: KeyBind,
-        window: Option<Self::Window>,
-    );
-
-    fn add_mousebind(
-        &mut self,
-        keybind: MouseBind,
-        window: Option<Self::Window>,
-    );
-    fn remove_mousebind(
-        &mut self,
-        keybind: MouseBind,
-        window: Option<Self::Window>,
-    );
+    /// add global keybind
+    fn add_keybind(&mut self, keybind: KeyOrMouseBind);
+    fn remove_keybind(&mut self, keybind: &KeyOrMouseBind);
 
     fn focus_window(&self, window: Self::Window);
     fn unfocus_window(&self, window: Self::Window);
