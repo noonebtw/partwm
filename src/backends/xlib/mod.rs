@@ -267,6 +267,7 @@ impl XLib {
             }
             xlib::KeyPress | xlib::KeyRelease => {
                 let ev = unsafe { &event.key };
+
                 let keycode =
                     keysym_to_virtual_keycode(self.keyev_to_keysym(ev).get());
                 let state = if ev.type_ == xlib::KeyPress {

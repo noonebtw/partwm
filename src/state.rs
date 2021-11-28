@@ -190,15 +190,15 @@ where
             },
         ));
 
-        self.add_keybind(KeyBinding::new(
-            KeyBind::new(VirtualKeyCode::Print),
-            |wm, _| wm.spawn("screenshot.sh", &[]),
-        ));
+        // self.add_keybind(KeyBinding::new(
+        //     KeyBind::new(VirtualKeyCode::Print),
+        //     |wm, _| wm.spawn("screenshot.sh", &[]),
+        // ));
 
-        self.add_keybind(KeyBinding::new(
-            KeyBind::new(VirtualKeyCode::Print).with_mod(ModifierKey::Shift),
-            |wm, _| wm.spawn("screenshot.sh", &["-edit"]),
-        ));
+        // self.add_keybind(KeyBinding::new(
+        //     KeyBind::new(VirtualKeyCode::Print).with_mod(ModifierKey::Shift),
+        //     |wm, _| wm.spawn("screenshot.sh", &["-edit"]),
+        // ));
 
         self.add_keybind(KeyBinding::new(
             KeyBind::new(VirtualKeyCode::M).with_mod(self.config.mod_key),
