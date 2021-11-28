@@ -491,8 +491,6 @@ impl XLib {
 
         XKeySym::new(keysym as u32)
     }
-
-    fn modifier_state_to_modmask(&self) {}
 }
 
 trait ModifierStateExt {
@@ -721,6 +719,46 @@ impl WindowServerBackend for XLib {
     fn get_window_size(&self, window: Self::Window) -> Option<Point<i32>> {
         self.get_window_attributes(window)
             .map(|wa| (wa.width, wa.height).into())
+    }
+
+    fn grab_cursor(&self) {
+        unsafe {
+            xlib::XGrabPointer(
+                self.dpy(),
+                self.root,
+                0,
+                (xlib::ButtonPressMask
+                    | xlib::ButtonReleaseMask
+                    | xlib::PointerMotionMask) as u32,
+                xlib::GrabModeAsync,
+                xlib::GrabModeAsync,
+                0,
+                0,
+                xlib::CurrentTime,
+            );
+        }
+    }
+
+    fn ungrab_cursor(&self) {
+        unsafe {
+            xlib::XUngrabPointer(self.dpy(), xlib::CurrentTime);
+        }
+    }
+
+    fn move_cursor(&self, window: Option<Self::Window>, position: Point<i32>) {
+        unsafe {
+            xlib::XWarpPointer(
+                self.dpy(),
+                0,
+                window.unwrap_or(self.root),
+                0,
+                0,
+                0,
+                0,
+                position.x,
+                position.y,
+            );
+        }
     }
 }
 

@@ -714,9 +714,8 @@ where
                     )
                 };
 
-                // TODO fix backend cursor api
-                //self.xlib.move_cursor(None, corner_pos);
-                //self.xlib.grab_cursor();
+                self.backend.move_cursor(None, corner_pos.into());
+                self.backend.grab_cursor();
 
                 self.move_resize_window =
                     MoveResizeInfo::Resize(ResizeInfoInner {
@@ -736,8 +735,7 @@ where
             }
             MouseButton::Right => {
                 self.move_resize_window = MoveResizeInfo::None;
-                // TODO fix backend cursor api
-                //self.xlib.release_cursor();
+                self.backend.ungrab_cursor();
             }
             _ => {}
         }

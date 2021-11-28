@@ -5,6 +5,7 @@ use super::{
 
 pub trait WindowServerBackend {
     type Window;
+    //type WindowEvent = super::window_event::WindowEvent<Self::Window>;
 
     fn build() -> Self;
 
@@ -45,6 +46,10 @@ pub trait WindowServerBackend {
 
     fn screen_size(&self) -> Point<i32>;
     fn get_window_size(&self, window: Self::Window) -> Option<Point<i32>>;
+
+    fn grab_cursor(&self);
+    fn ungrab_cursor(&self);
+    fn move_cursor(&self, window: Option<Self::Window>, position: Point<i32>);
 
     fn resize_window(&self, window: Self::Window, new_size: Point<i32>) {
         self.configure_window(window, Some(new_size), None);
