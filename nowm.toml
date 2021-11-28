@@ -1,0 +1,4 @@
+num_virtualscreens = 10
+mod_key = "Super"
+gap = 5
+kill_clients_on_exit = false

@@ -22,10 +22,13 @@ use crate::{
     clients::{Client, ClientEntry, ClientKey, ClientState},
 };
 
+use serde::Deserialize;
+
 /**
 Contains static config data for the window manager, the sort of stuff you might want to
 be able to configure in a config file.
-*/
+ */
+#[derive(Debug, Deserialize)]
 pub struct WMConfig {
     num_virtualscreens: usize,
     mod_key: ModifierKey,

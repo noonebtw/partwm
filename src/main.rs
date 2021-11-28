@@ -1,5 +1,7 @@
 #![allow(dead_code, unused_variables)]
 
+use std::io::Read;
+
 use log::{debug, error, info, trace, warn};
 use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
@@ -67,8 +69,23 @@ fn main() {
 
     log_prologue();
 
-    state::WindowManager::<backends::xlib::XLib>::new(WMConfig::default())
-        .run();
+    let mut config_path = std::path::PathBuf::from(env!("HOME"));
+    config_path.push(".config/nowm.toml");
+
+    let config = std::fs::File::open(config_path)
+        .and_then(|mut file| {
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(content)
+        })
+        .and_then(|content| Ok(toml::from_str::<WMConfig>(&content)?))
+        .unwrap_or_else(|e| {
+            warn!("error parsing config file: {}", e);
+            info!("falling back to default config.");
+            WMConfig::default()
+        });
+
+    state::WindowManager::<backends::xlib::XLib>::new(config).run();
 }
 
 fn log_prologue() {

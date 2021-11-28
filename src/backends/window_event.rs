@@ -24,7 +24,9 @@ pub enum KeyState {
     Released,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Deserialize,
+)]
 #[repr(u8)]
 pub enum ModifierKey {
     Shift,
