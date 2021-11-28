@@ -857,6 +857,10 @@ impl WindowServerBackend for XLib {
             );
         }
     }
+
+    fn all_windows(&self) -> Vec<Self::Window> {
+        todo!()
+    }
 }
 
 struct XLibAtoms {

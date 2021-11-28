@@ -537,7 +537,9 @@ impl ClientState {
     {
         let (new, old) = self.focus_client_inner(key);
 
-        info!("Swapping focus: new({:?}) old({:?})", new, old);
+        if !(new.is_vacant() && old.is_vacant()) {
+            info!("Swapping focus: new({:?}) old({:?})", new, old);
+        }
 
         (new, old)
     }
