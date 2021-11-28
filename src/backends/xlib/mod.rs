@@ -1,16 +1,12 @@
-#![allow(unused_variables, dead_code)]
 use log::{error, warn};
 use std::{ffi::CString, rc::Rc};
 
 use thiserror::Error;
 
-use x11::xlib::{
-    self, Atom, KeyPress, KeyRelease, Window, XEvent, XInternAtom, XKeyEvent,
-};
+use x11::xlib::{self, Atom, Window, XEvent, XInternAtom, XKeyEvent};
 
 use crate::backends::{
-    keycodes::KeyOrButton, window_event::ModifierKey,
-    xlib::keysym::mouse_button_to_xbutton,
+    keycodes::KeyOrButton, xlib::keysym::mouse_button_to_xbutton,
 };
 
 use self::keysym::{
@@ -115,7 +111,6 @@ impl Display {
 
 pub struct XLib {
     display: Display,
-    modifier_state: ModifierState,
     root: Window,
     screen: i32,
     atoms: XLibAtoms,
@@ -149,7 +144,6 @@ impl XLib {
             display,
             screen,
             root,
-            modifier_state: ModifierState::empty(),
             atoms,
             keybinds: Vec::new(),
             active_border_color: None,
@@ -374,33 +368,33 @@ impl XLib {
         }
     }
 
-    #[allow(non_upper_case_globals)]
-    fn update_modifier_state(&mut self, keyevent: &XKeyEvent) {
-        //keyevent.keycode
-        let keysym = self.keyev_to_keysym(keyevent);
+    // #[allow(non_upper_case_globals)]
+    // fn update_modifier_state(&mut self, keyevent: &XKeyEvent) {
+    //     //keyevent.keycode
+    //     let keysym = self.keyev_to_keysym(keyevent);
 
-        use x11::keysym::*;
+    //     use x11::keysym::*;
 
-        let modifier = match keysym.get() {
-            XK_Shift_L | XK_Shift_R => Some(ModifierKey::Shift),
-            XK_Control_L | XK_Control_R => Some(ModifierKey::Control),
-            XK_Alt_L | XK_Alt_R => Some(ModifierKey::Alt),
-            XK_ISO_Level3_Shift => Some(ModifierKey::AltGr),
-            XK_Caps_Lock => Some(ModifierKey::ShiftLock),
-            XK_Num_Lock => Some(ModifierKey::NumLock),
-            XK_Win_L | XK_Win_R => Some(ModifierKey::Super),
-            XK_Super_L | XK_Super_R => Some(ModifierKey::Super),
-            _ => None,
-        };
+    //     let modifier = match keysym.get() {
+    //         XK_Shift_L | XK_Shift_R => Some(ModifierKey::Shift),
+    //         XK_Control_L | XK_Control_R => Some(ModifierKey::Control),
+    //         XK_Alt_L | XK_Alt_R => Some(ModifierKey::Alt),
+    //         XK_ISO_Level3_Shift => Some(ModifierKey::AltGr),
+    //         XK_Caps_Lock => Some(ModifierKey::ShiftLock),
+    //         XK_Num_Lock => Some(ModifierKey::NumLock),
+    //         XK_Win_L | XK_Win_R => Some(ModifierKey::Super),
+    //         XK_Super_L | XK_Super_R => Some(ModifierKey::Super),
+    //         _ => None,
+    //     };
 
-        if let Some(modifier) = modifier {
-            match keyevent.type_ {
-                KeyPress => self.modifier_state.insert_mod(modifier),
-                KeyRelease => self.modifier_state.unset_mod(modifier),
-                _ => unreachable!("keyyevent != (KeyPress | KeyRelease)"),
-            }
-        }
-    }
+    //     if let Some(modifier) = modifier {
+    //         match keyevent.type_ {
+    //             KeyPress => self.modifier_state.insert_mod(modifier),
+    //             KeyRelease => self.modifier_state.unset_mod(modifier),
+    //             _ => unreachable!("keyyevent != (KeyPress | KeyRelease)"),
+    //         }
+    //     }
+    // }
 
     fn get_numlock_mask(&self) -> Option<u32> {
         unsafe {
@@ -483,6 +477,7 @@ impl XLib {
         }
     }
 
+    #[allow(dead_code)]
     fn ungrab_key_or_button(
         &self,
         binding: &KeyOrMouseBind,
@@ -558,9 +553,8 @@ trait ModifierStateExt {
 
 impl ModifierStateExt for ModifierState {
     fn as_modmask(&self, xlib: &XLib) -> u32 {
-        let bits = self.bits();
         let mut mask = 0;
-        let numlock_mask = xlib
+        let _numlock_mask = xlib
             .get_numlock_mask()
             .expect("failed to query numlock mask");
 
@@ -899,6 +893,7 @@ impl WindowServerBackend for XLib {
     }
 }
 
+#[allow(dead_code)]
 struct XLibAtoms {
     wm_protocols: Atom,
     wm_delete_window: Atom,

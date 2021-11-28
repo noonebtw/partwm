@@ -13,6 +13,7 @@ impl XftColor {
         self.inner.pixel
     }
 
+    #[allow(dead_code)]
     pub fn color(&self) -> x11::xrender::XRenderColor {
         self.inner.color
     }

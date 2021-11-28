@@ -1,10 +1,7 @@
 #![allow(unreachable_patterns)]
 use std::{borrow::Borrow, ops::Deref};
 
-use crate::backends::{
-    keycodes::{MouseButton, VirtualKeyCode},
-    window_event::ModifierState,
-};
+use crate::backends::keycodes::{MouseButton, VirtualKeyCode};
 
 pub fn xev_to_mouse_button(
     button: &x11::xlib::XButtonEvent,
@@ -79,10 +76,6 @@ impl From<VirtualKeyCode> for XKeySym {
     fn from(value: VirtualKeyCode) -> Self {
         Self(virtual_keycode_to_keysym(value).unwrap())
     }
-}
-
-pub fn xlib_state_to_modifier_state(state: u32) -> ModifierState {
-    todo!()
 }
 
 /// from winit

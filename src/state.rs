@@ -2,11 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use log::{error, info};
 
-use x11::xlib::{self, Window, XEvent};
-use xlib::{
-    XConfigureRequestEvent, XCrossingEvent, XDestroyWindowEvent,
-    XMapRequestEvent, XUnmapEvent,
-};
+use x11::xlib::{self, Window};
 
 use crate::{
     backends::{
@@ -461,7 +457,7 @@ where
         if self.config.kill_clients_on_exit {
             self.clients
                 .iter_all_clients()
-                .for_each(|(&window, client)| self.backend.kill_window(window));
+                .for_each(|(&window, _)| self.backend.kill_window(window));
         }
 
         info!("Goodbye.");
@@ -709,48 +705,6 @@ where
         self.arrange_clients();
 
         self.focus_client(&window, true);
-    }
-
-    fn map_request(&mut self, event: &XEvent) {
-        let event: &XMapRequestEvent = event.as_ref();
-
-        if !self.clients.contains(&event.window) {
-            self.new_client(event.window);
-        }
-    }
-
-    fn unmap_notify(&mut self, event: &XEvent) {
-        let event: &XUnmapEvent = event.as_ref();
-
-        self.clients.remove(&event.window);
-
-        self.arrange_clients();
-    }
-
-    fn destroy_notify(&mut self, event: &XEvent) {
-        let event: &XDestroyWindowEvent = event.as_ref();
-
-        self.clients.remove(&event.window);
-
-        self.arrange_clients();
-    }
-
-    fn configure_request(&mut self, event: &XEvent) {
-        let event: &XConfigureRequestEvent = event.as_ref();
-
-        // TODO
-        // match self.clients.get(&event.window).into_option() {
-        //     Some(client) => self
-        //         .xlib
-        //         .configure_client(client, self.clients.get_border()),
-        //     None => self.xlib.configure_window(event),
-        // }
-    }
-
-    fn enter_notify(&mut self, event: &XEvent) {
-        let event: &XCrossingEvent = event.as_ref();
-
-        self.focus_client(&event.window, false);
     }
 
     /// ensure event.subwindow refers to a valid client.
