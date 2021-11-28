@@ -30,6 +30,7 @@ pub struct WMConfig {
     num_virtualscreens: usize,
     mod_key: ModifierKey,
     gap: Option<i32>,
+    kill_clients_on_exit: bool,
 }
 
 pub struct WindowManager<B = XLib>
@@ -410,6 +411,13 @@ where
     }
 
     fn quit(&self) -> ! {
+        // TODO: should the window manager kill all clients on exit? probably
+        if self.config.kill_clients_on_exit {
+            self.clients
+                .iter_all_clients()
+                .for_each(|(&window, client)| self.backend.kill_window(window));
+        }
+
         info!("Goodbye.");
 
         std::process::exit(0);
@@ -857,6 +865,7 @@ impl Default for WMConfig {
             num_virtualscreens: 10,
             mod_key: ModifierKey::Super,
             gap: Some(2),
+            kill_clients_on_exit: false,
         }
     }
 }

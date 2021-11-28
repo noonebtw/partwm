@@ -288,7 +288,7 @@ impl ClientState {
             .filter(move |&(k, _)| self.is_client_visible(k))
     }
 
-    fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.floating_clients.iter().chain(self.clients.iter())
     }
 
