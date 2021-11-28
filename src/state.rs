@@ -58,12 +58,14 @@ enum MoveResizeInfo {
     None,
 }
 
+#[derive(Debug)]
 struct MoveInfoInner {
     window: Window,
     starting_cursor_pos: Point<i32>,
     starting_window_pos: Point<i32>,
 }
 
+#[derive(Debug)]
 struct ResizeInfoInner {
     window: Window,
     starting_cursor_pos: Point<i32>,
@@ -160,12 +162,12 @@ where
         ));
 
         self.add_keybind(KeyBinding::new(
-            KeyBind::new(VirtualKeyCode::Snapshot),
+            KeyBind::new(VirtualKeyCode::Print),
             |wm, _| wm.spawn("screenshot.sh", &[]),
         ));
 
         self.add_keybind(KeyBinding::new(
-            KeyBind::new(VirtualKeyCode::Snapshot).with_mod(ModifierKey::Shift),
+            KeyBind::new(VirtualKeyCode::Print).with_mod(ModifierKey::Shift),
             |wm, _| wm.spawn("screenshot.sh", &["-edit"]),
         ));
 
@@ -249,8 +251,6 @@ where
         ));
 
         self.add_vs_switch_keybinds();
-
-        //self.xlib.init();
 
         self
     }
@@ -421,14 +421,16 @@ where
 
     // TODO: change this somehow cuz I'm not a big fan of this "hardcoded" keybind stuff
     fn handle_keybinds(&mut self, event: &KeyEvent<B::Window>) {
-        // I'm not sure if this has to be a Rc<RefCell>> or if it would be better as a Cell<>
-        let keybinds = self.keybinds.clone();
+        if event.state == KeyState::Released {
+            // I'm not sure if this has to be a Rc<RefCell>> or if it would be better as a Cell<>
+            let keybinds = self.keybinds.clone();
 
-        for kb in keybinds.borrow().iter() {
-            if kb.key.key == event.keycode
-                && kb.key.modifiers == event.modifierstate
-            {
-                kb.call(self, event);
+            for kb in keybinds.borrow().iter() {
+                if kb.key.key == event.keycode
+                    && kb.key.modifiers == event.modifierstate
+                {
+                    kb.call(self, event);
+                }
             }
         }
     }
@@ -761,6 +763,8 @@ where
     fn do_move_resize_window(&mut self, event: &MotionEvent<B::Window>) {
         match &self.move_resize_window {
             MoveResizeInfo::Move(info) => {
+                info!("do_move: {:#?}", info);
+
                 let (x, y) = (
                     event.position.x - info.starting_cursor_pos.x,
                     event.position.y - info.starting_cursor_pos.y,
@@ -778,6 +782,8 @@ where
                 }
             }
             MoveResizeInfo::Resize(info) => {
+                info!("do_resize: {:#?}", info);
+
                 let (x, y) = (
                     event.position.x - info.starting_cursor_pos.x,
                     event.position.y - info.starting_cursor_pos.y,

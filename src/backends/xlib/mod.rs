@@ -1,5 +1,5 @@
 #![allow(unused_variables, dead_code)]
-use log::{error, warn};
+use log::{debug, error, warn};
 use std::{ffi::CString, rc::Rc};
 
 use thiserror::Error;
@@ -13,13 +13,17 @@ use crate::backends::{
     xlib::keysym::mouse_button_to_xbutton,
 };
 
-use self::keysym::{virtual_keycode_to_keysym, xev_to_mouse_button, XKeySym};
+use self::keysym::{
+    keysym_to_virtual_keycode, virtual_keycode_to_keysym, xev_to_mouse_button,
+    XKeySym,
+};
 
 use super::{
     keycodes::VirtualKeyCode,
     window_event::{
-        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyOrMouseBind,
-        KeyState, MapEvent, ModifierState, Point, UnmapEvent, WindowEvent,
+        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyEvent,
+        KeyOrMouseBind, KeyState, MapEvent, ModifierState, MotionEvent, Point,
+        UnmapEvent, WindowEvent,
     },
     WindowServerBackend,
 };
@@ -152,7 +156,7 @@ impl XLib {
     fn new() -> Self {
         let (display, screen, root) = {
             let display = unsafe { xlib::XOpenDisplay(std::ptr::null()) };
-            assert_eq!(display, std::ptr::null_mut());
+            assert_ne!(display, std::ptr::null_mut());
             let screen = unsafe { xlib::XDefaultScreen(display) };
             let root = unsafe { xlib::XRootWindow(display, screen) };
 
@@ -215,14 +219,14 @@ impl XLib {
             event.assume_init()
         };
 
-        match event.get_type() {
-            xlib::KeyPress | xlib::KeyRelease => {
-                self.update_modifier_state(AsRef::<xlib::XKeyEvent>::as_ref(
-                    &event,
-                ));
-            }
-            _ => {}
-        }
+        // match event.get_type() {
+        //     xlib::KeyPress | xlib::KeyRelease => {
+        //         self.update_modifier_state(AsRef::<xlib::XKeyEvent>::as_ref(
+        //             &event,
+        //         ));
+        //     }
+        //     _ => {}
+        // }
 
         event
     }
@@ -261,26 +265,50 @@ impl XLib {
                     window: ev.window,
                 }))
             }
+            xlib::MotionNotify => {
+                let ev = unsafe { &event.motion };
+                Some(XLibWindowEvent::MotionEvent(MotionEvent {
+                    position: (ev.x, ev.y).into(),
+                    window: ev.window,
+                }))
+            }
             // both ButtonPress and ButtonRelease use the XButtonEvent structure, aliased as either
             // XButtonReleasedEvent or XButtonPressedEvent
             xlib::ButtonPress | xlib::ButtonRelease => {
                 let ev = unsafe { &event.button };
                 let keycode = xev_to_mouse_button(ev).unwrap();
-                let state = if ev.state as i32 == xlib::ButtonPress {
+                let state = if ev.type_ == xlib::ButtonPress {
                     KeyState::Pressed
                 } else {
                     KeyState::Released
                 };
-
-                let modifierstate = ModifierState::empty();
 
                 Some(XLibWindowEvent::ButtonEvent(ButtonEvent::new(
                     ev.subwindow,
                     state,
                     keycode,
                     (ev.x, ev.y).into(),
-                    modifierstate,
+                    ModifierState::from_modmask(ev.state),
                 )))
+            }
+            xlib::KeyPress | xlib::KeyRelease => {
+                let ev = unsafe { &event.key };
+                let keycode =
+                    keysym_to_virtual_keycode(self.keyev_to_keysym(ev).get());
+                let state = if ev.type_ == xlib::KeyPress {
+                    KeyState::Pressed
+                } else {
+                    KeyState::Released
+                };
+
+                keycode.map(|keycode| {
+                    XLibWindowEvent::KeyEvent(KeyEvent::new(
+                        ev.subwindow,
+                        state,
+                        keycode,
+                        ModifierState::from_modmask(ev.state),
+                    ))
+                })
             }
             _ => None,
         }
@@ -387,7 +415,7 @@ impl XLib {
 
         if let Some(modifier) = modifier {
             match keyevent.type_ {
-                KeyPress => self.modifier_state.set_mod(modifier),
+                KeyPress => self.modifier_state.insert_mod(modifier),
                 KeyRelease => self.modifier_state.unset_mod(modifier),
                 _ => unreachable!("keyyevent != (KeyPress | KeyRelease)"),
             }
@@ -545,6 +573,7 @@ impl XLib {
 
 trait ModifierStateExt {
     fn as_modmask(&self, xlib: &XLib) -> u32;
+    fn from_modmask(modmask: u32) -> Self;
 }
 
 impl ModifierStateExt for ModifierState {
@@ -555,14 +584,29 @@ impl ModifierStateExt for ModifierState {
             .get_numlock_mask()
             .expect("failed to query numlock mask");
 
-        mask &= xlib::ShiftMask & !u32::from(self.contains(Self::SHIFT));
-        mask &= xlib::LockMask & !u32::from(self.contains(Self::SHIFT_LOCK));
-        mask &= xlib::ControlMask & !u32::from(self.contains(Self::CONTROL));
-        mask &= xlib::Mod1Mask & !u32::from(self.contains(Self::ALT));
-        mask &= xlib::Mod4Mask & !u32::from(self.contains(Self::SUPER));
-        mask &= numlock_mask & !u32::from(self.contains(Self::NUM_LOCK));
+        mask |= xlib::ShiftMask * u32::from(self.contains(Self::SHIFT));
+        //mask |= xlib::LockMask * u32::from(self.contains(Self::SHIFT_LOCK));
+        mask |= xlib::ControlMask * u32::from(self.contains(Self::CONTROL));
+        mask |= xlib::Mod1Mask * u32::from(self.contains(Self::ALT));
+        //mask |= xlib::Mod2Mask * u32::from(self.contains(Self::NUM_LOCK));
+        //mask |= xlib::Mod3Mask * u32::from(self.contains(Self::ALT_GR));
+        mask |= xlib::Mod4Mask * u32::from(self.contains(Self::SUPER));
+        //mask |= numlock_mask * u32::from(self.contains(Self::NUM_LOCK));
 
         mask
+    }
+
+    fn from_modmask(modmask: u32) -> Self {
+        let mut state = Self::empty();
+        state.set(Self::SHIFT, (modmask & xlib::ShiftMask) != 0);
+        //state.set(Self::SHIFT_LOCK, (modmask & xlib::LockMask) != 0);
+        state.set(Self::CONTROL, (modmask & xlib::ControlMask) != 0);
+        state.set(Self::ALT, (modmask & xlib::Mod1Mask) != 0);
+        //state.set(Self::NUM_LOCK, (modmask & xlib::Mod2Mask) != 0);
+        state.set(Self::ALT_GR, (modmask & xlib::Mod3Mask) != 0);
+        state.set(Self::SUPER, (modmask & xlib::Mod4Mask) != 0);
+
+        state
     }
 }
 
@@ -576,12 +620,14 @@ impl WindowServerBackend for XLib {
     }
 
     fn next_event(&mut self) -> super::window_event::WindowEvent<Self::Window> {
-        std::iter::from_fn(|| {
+        loop {
             let ev = self.next_xevent();
-            self.xevent_to_window_event(ev)
-        })
-        .next()
-        .unwrap()
+            let ev = self.xevent_to_window_event(ev);
+
+            if let Some(ev) = ev {
+                return ev;
+            }
+        }
     }
 
     fn handle_event(
@@ -700,7 +746,6 @@ impl WindowServerBackend for XLib {
                 xlib::XKillClient(self.dpy(), window);
             }
         }
-        todo!()
     }
 
     fn get_parent_window(&self, window: Self::Window) -> Option<Self::Window> {

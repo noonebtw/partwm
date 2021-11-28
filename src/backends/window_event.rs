@@ -18,7 +18,7 @@ pub enum WindowEvent<Window> {
     FullscreenEvent(FullscreenEvent<Window>), //1 { window: Window, event: 1 },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum KeyState {
     Pressed,
     Released,
@@ -55,7 +55,7 @@ impl<const N: usize> From<[ModifierKey; N]> for ModifierState {
     fn from(slice: [ModifierKey; N]) -> Self {
         let mut state = ModifierState::empty();
         for ele in slice {
-            state.set_mod(ele);
+            state.insert_mod(ele);
         }
 
         state
@@ -69,32 +69,31 @@ impl ModifierState {
     }
 
     pub fn with_mod(mut self, modifier: ModifierKey) -> Self {
-        self.set_mod(modifier);
+        self.insert_mod(modifier);
         self
     }
 
     pub fn unset_mod(&mut self, modifier: ModifierKey) {
-        match modifier {
-            ModifierKey::Shift => self.remove(Self::SHIFT),
-            ModifierKey::ShiftLock => self.remove(Self::SHIFT_LOCK),
-            ModifierKey::Control => self.remove(Self::CONTROL),
-            ModifierKey::Alt => self.remove(Self::ALT),
-            ModifierKey::AltGr => self.remove(Self::ALT_GR),
-            ModifierKey::Super => self.remove(Self::SUPER),
-            ModifierKey::NumLock => self.remove(Self::NUM_LOCK),
-        }
+        self.set_mod(modifier, false);
     }
 
-    pub fn set_mod(&mut self, modifier: ModifierKey) {
-        match modifier {
-            ModifierKey::Shift => self.insert(Self::SHIFT),
-            ModifierKey::ShiftLock => self.insert(Self::SHIFT_LOCK),
-            ModifierKey::Control => self.insert(Self::CONTROL),
-            ModifierKey::Alt => self.insert(Self::ALT),
-            ModifierKey::AltGr => self.insert(Self::ALT_GR),
-            ModifierKey::Super => self.insert(Self::SUPER),
-            ModifierKey::NumLock => self.insert(Self::NUM_LOCK),
-        }
+    pub fn set_mod(&mut self, modifier: ModifierKey, state: bool) {
+        self.set(
+            match modifier {
+                ModifierKey::Shift => Self::SHIFT,
+                ModifierKey::ShiftLock => Self::SHIFT_LOCK,
+                ModifierKey::Control => Self::CONTROL,
+                ModifierKey::Alt => Self::ALT,
+                ModifierKey::AltGr => Self::ALT_GR,
+                ModifierKey::Super => Self::SUPER,
+                ModifierKey::NumLock => Self::NUM_LOCK,
+            },
+            state,
+        );
+    }
+
+    pub fn insert_mod(&mut self, modifier: ModifierKey) {
+        self.set_mod(modifier, true);
     }
 }
 
@@ -294,7 +293,7 @@ impl KeyBind {
     }
 
     pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
-        self.modifiers.set_mod(modifier_key);
+        self.modifiers.insert_mod(modifier_key);
         self
     }
 }
@@ -314,7 +313,7 @@ impl MouseBind {
     }
 
     pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
-        self.modifiers.set_mod(modifier_key);
+        self.modifiers.insert_mod(modifier_key);
         self
     }
 }
@@ -334,7 +333,7 @@ impl KeyOrMouseBind {
     }
 
     pub fn with_mod(mut self, modifier_key: ModifierKey) -> Self {
-        self.modifiers.set_mod(modifier_key);
+        self.modifiers.insert_mod(modifier_key);
         self
     }
 }
