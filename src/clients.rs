@@ -858,7 +858,7 @@ impl VirtualScreenStore {
     fn go_to_nth(&mut self, n: usize) -> usize {
         self.last_idx = Some(self.current_idx);
 
-        self.current_idx = n % self.screens.len();
+        self.current_idx = n.min(self.screens.len() - 1);
 
         self.current_idx
     }

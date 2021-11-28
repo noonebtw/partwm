@@ -34,6 +34,35 @@ pub struct WMConfig {
     mod_key: ModifierKey,
     gap: Option<i32>,
     kill_clients_on_exit: bool,
+    #[serde(default = "WMConfig::default_active_window_border_color")]
+    active_window_border_color: String,
+    #[serde(default = "WMConfig::default_inactive_window_border_color")]
+    inactive_window_border_color: String,
+}
+
+impl WMConfig {
+    fn default_active_window_border_color() -> String {
+        "#ffffff".to_string()
+    }
+
+    fn default_inactive_window_border_color() -> String {
+        "#444444".to_string()
+    }
+}
+
+impl Default for WMConfig {
+    fn default() -> Self {
+        Self {
+            num_virtualscreens: 10,
+            mod_key: ModifierKey::Super,
+            gap: Some(2),
+            kill_clients_on_exit: false,
+            active_window_border_color:
+                Self::default_active_window_border_color(),
+            inactive_window_border_color:
+                Self::default_inactive_window_border_color(),
+        }
+    }
 }
 
 pub struct WindowManager<B = XLib>
@@ -255,6 +284,13 @@ where
         ));
 
         self.add_vs_switch_keybinds();
+
+        self.backend.set_active_window_border_color(
+            &self.config.active_window_border_color,
+        );
+        self.backend.set_inactive_window_border_color(
+            &self.config.inactive_window_border_color,
+        );
 
         // add all already existing windows to the WM
         if let Some(windows) = self.backend.all_windows() {
@@ -865,17 +901,6 @@ where
             Err(err) => {
                 error!("Failed to spawn {:?}: {:?}", command, err);
             }
-        }
-    }
-}
-
-impl Default for WMConfig {
-    fn default() -> Self {
-        Self {
-            num_virtualscreens: 10,
-            mod_key: ModifierKey::Super,
-            gap: Some(2),
-            kill_clients_on_exit: false,
         }
     }
 }

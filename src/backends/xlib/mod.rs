@@ -28,6 +28,7 @@ use super::{
     WindowServerBackend,
 };
 
+pub mod color;
 pub mod keysym;
 
 pub type XLibWindowEvent = WindowEvent<xlib::Window>;
@@ -100,31 +101,6 @@ impl From<u8> for XlibError {
     }
 }
 
-// impl Into<i32> for XlibError {
-//     fn into(self) -> i32 {
-//         match self {
-//             XlibError::BadAccess => xlib::BadAccess.into(),
-//             XlibError::BadAlloc => xlib::BadAlloc.into(),
-//             XlibError::BadAtom => xlib::BadAtom.into(),
-//             XlibError::BadColor => xlib::BadColor.into(),
-//             XlibError::BadCursor => xlib::BadCursor.into(),
-//             XlibError::BadDrawable => xlib::BadDrawable.into(),
-//             XlibError::BadFont => xlib::BadFont.into(),
-//             XlibError::BadGC => xlib::BadGC.into(),
-//             XlibError::BadIDChoice => xlib::BadIDChoice.into(),
-//             XlibError::BadImplementation => xlib::BadImplementation.into(),
-//             XlibError::BadLength => xlib::BadLength.into(),
-//             XlibError::BadMatch => xlib::BadMatch.into(),
-//             XlibError::BadName => xlib::BadName.into(),
-//             XlibError::BadPixmap => xlib::BadPixmap.into(),
-//             XlibError::BadRequest => xlib::BadRequest.into(),
-//             XlibError::BadValue => xlib::BadValue.into(),
-//             XlibError::BadWindow => xlib::BadWindow.into(),
-//             XlibError::InvalidError(err) => err,
-//         }
-//     }
-// }
-
 impl Display {
     pub fn new(display: *mut x11::xlib::Display) -> Self {
         Self {
@@ -144,6 +120,8 @@ pub struct XLib {
     screen: i32,
     atoms: XLibAtoms,
     keybinds: Vec<KeyOrMouseBind>,
+    active_border_color: Option<color::XftColor>,
+    inactive_border_color: Option<color::XftColor>,
 }
 
 impl Drop for XLib {
@@ -174,6 +152,8 @@ impl XLib {
             modifier_state: ModifierState::empty(),
             atoms,
             keybinds: Vec::new(),
+            active_border_color: None,
+            inactive_border_color: None,
         }
     }
 
@@ -684,12 +664,18 @@ impl WindowServerBackend for XLib {
                 xlib::CurrentTime,
             );
 
-            // TODO: make painting the window border a seperate function, and configurable
-            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
+            let border_color = self
+                .active_border_color
+                .as_ref()
+                .map(|color| color.pixel())
+                .unwrap_or_else(|| {
+                    xlib::XDefaultScreenOfDisplay(self.dpy())
+                        .as_ref()
+                        .unwrap()
+                        .white_pixel
+                });
 
-            if let Some(screen) = screen {
-                xlib::XSetWindowBorder(self.dpy(), window, screen.white_pixel);
-            }
+            xlib::XSetWindowBorder(self.dpy(), window, border_color);
 
             xlib::XChangeProperty(
                 self.dpy(),
@@ -716,11 +702,19 @@ impl WindowServerBackend for XLib {
             );
 
             // TODO: make painting the window border a seperate function, and configurable
-            let screen = xlib::XDefaultScreenOfDisplay(self.dpy()).as_ref();
 
-            if let Some(screen) = screen {
-                xlib::XSetWindowBorder(self.dpy(), window, screen.black_pixel);
-            }
+            let border_color = self
+                .inactive_border_color
+                .as_ref()
+                .map(|color| color.pixel())
+                .unwrap_or_else(|| {
+                    xlib::XDefaultScreenOfDisplay(self.dpy())
+                        .as_ref()
+                        .unwrap()
+                        .black_pixel
+                });
+
+            xlib::XSetWindowBorder(self.dpy(), window, border_color);
 
             xlib::XDeleteProperty(
                 self.dpy(),
@@ -884,6 +878,24 @@ impl WindowServerBackend for XLib {
 
             windows
         })
+    }
+
+    fn set_active_window_border_color(&mut self, color_name: &str) {
+        self.active_border_color = color::XftColor::new(
+            self.display.clone(),
+            self.screen,
+            color_name.to_owned(),
+        )
+        .ok();
+    }
+
+    fn set_inactive_window_border_color(&mut self, color_name: &str) {
+        self.inactive_border_color = color::XftColor::new(
+            self.display.clone(),
+            self.screen,
+            color_name.to_owned(),
+        )
+        .ok();
     }
 }
 

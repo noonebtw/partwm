@@ -40,6 +40,9 @@ pub trait WindowServerBackend {
 
     fn all_windows(&self) -> Option<Vec<Self::Window>>;
 
+    fn set_active_window_border_color(&mut self, color_name: &str);
+    fn set_inactive_window_border_color(&mut self, color_name: &str);
+
     fn resize_window(&self, window: Self::Window, new_size: Point<i32>) {
         self.configure_window(window, Some(new_size), None, None);
     }
