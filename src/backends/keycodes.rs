@@ -89,7 +89,7 @@ pub enum VirtualKeyCode {
     F24,
 
     /// Print Screen/SysRq.
-    Snapshot,
+    Print,
     /// Scroll Lock.
     Scroll,
     /// Pause/Break key, next to Scroll lock.
