@@ -28,6 +28,7 @@ pub trait WindowServerBackend {
         window: Self::Window,
         new_size: Option<Point<i32>>,
         new_pos: Option<Point<i32>>,
+        new_border: Option<i32>,
     );
 
     fn screen_size(&self) -> Point<i32>;
@@ -38,10 +39,10 @@ pub trait WindowServerBackend {
     fn move_cursor(&self, window: Option<Self::Window>, position: Point<i32>);
 
     fn resize_window(&self, window: Self::Window, new_size: Point<i32>) {
-        self.configure_window(window, Some(new_size), None);
+        self.configure_window(window, Some(new_size), None, None);
     }
 
     fn move_window(&self, window: Self::Window, new_pos: Point<i32>) {
-        self.configure_window(window, None, Some(new_pos));
+        self.configure_window(window, None, Some(new_pos), None);
     }
 }

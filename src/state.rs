@@ -362,7 +362,9 @@ where
 
             match event {
                 WindowEvent::KeyEvent(event) => {
-                    self.handle_keybinds(&event);
+                    if event.state == KeyState::Pressed {
+                        self.handle_keybinds(&event);
+                    }
                 }
                 WindowEvent::ButtonEvent(event) => {
                     self.button_event(&event);
@@ -421,16 +423,14 @@ where
 
     // TODO: change this somehow cuz I'm not a big fan of this "hardcoded" keybind stuff
     fn handle_keybinds(&mut self, event: &KeyEvent<B::Window>) {
-        if event.state == KeyState::Released {
-            // I'm not sure if this has to be a Rc<RefCell>> or if it would be better as a Cell<>
-            let keybinds = self.keybinds.clone();
+        // I'm not sure if this has to be a Rc<RefCell>> or if it would be better as a Cell<>
+        let keybinds = self.keybinds.clone();
 
-            for kb in keybinds.borrow().iter() {
-                if kb.key.key == event.keycode
-                    && kb.key.modifiers == event.modifierstate
-                {
-                    kb.call(self, event);
-                }
+        for kb in keybinds.borrow().iter() {
+            if kb.key.key == event.keycode
+                && kb.key.modifiers == event.modifierstate
+            {
+                kb.call(self, event);
             }
         }
     }
@@ -645,14 +645,14 @@ where
             Client::new_default(window)
         };
 
-        // TODO
-        //self.xlib
-        //.configure_client(&client, self.clients.get_border());
+        self.backend.configure_window(
+            window,
+            None,
+            None,
+            Some(self.clients.get_border()),
+        );
         self.clients.insert(client).unwrap();
         self.arrange_clients();
-
-        // TODO
-        //self.xlib.map_window(window);
 
         self.focus_client(&window, true);
     }

@@ -1,5 +1,5 @@
 #![allow(unused_variables, dead_code)]
-use log::{debug, error, warn};
+use log::{error, warn};
 use std::{ffi::CString, rc::Rc};
 
 use thiserror::Error;
@@ -656,6 +656,7 @@ impl WindowServerBackend for XLib {
                     event.window,
                     Some(event.size),
                     Some(event.position),
+                    None,
                 );
             }
             _ => {}
@@ -765,6 +766,7 @@ impl WindowServerBackend for XLib {
         window: Self::Window,
         new_size: Option<super::window_event::Point<i32>>,
         new_pos: Option<super::window_event::Point<i32>>,
+        new_border: Option<i32>,
     ) {
         let position = new_pos.unwrap_or(Point::new(0, 0));
         let size = new_size.unwrap_or(Point::new(0, 0));
@@ -773,7 +775,7 @@ impl WindowServerBackend for XLib {
             y: position.y,
             width: size.x,
             height: size.y,
-            border_width: 0,
+            border_width: new_border.unwrap_or(0),
             sibling: 0,
             stack_mode: 0,
         };
@@ -785,6 +787,9 @@ impl WindowServerBackend for XLib {
             }
             if new_size.is_some() {
                 mask |= xlib::CWWidth | xlib::CWHeight;
+            }
+            if new_border.is_some() {
+                mask |= xlib::CWBorderWidth;
             }
 
             u32::from(mask)
