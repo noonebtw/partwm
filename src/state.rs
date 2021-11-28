@@ -34,6 +34,8 @@ pub struct WMConfig {
     active_window_border_color: String,
     #[serde(default = "WMConfig::default_inactive_window_border_color")]
     inactive_window_border_color: String,
+    #[serde(default = "WMConfig::default_terminal")]
+    terminal_command: (String, Vec<String>),
 }
 
 impl WMConfig {
@@ -43,6 +45,10 @@ impl WMConfig {
 
     fn default_inactive_window_border_color() -> String {
         "#444444".to_string()
+    }
+
+    fn default_terminal() -> (String, Vec<String>) {
+        ("alacritty".to_string(), vec![])
     }
 }
 
@@ -57,6 +63,7 @@ impl Default for WMConfig {
                 Self::default_active_window_border_color(),
             inactive_window_border_color:
                 Self::default_inactive_window_border_color(),
+            terminal_command: Self::default_terminal(),
         }
     }
 }
@@ -171,7 +178,7 @@ where
             KeyBind::new(VirtualKeyCode::P).with_mod(self.config.mod_key),
             |wm, _| {
                 wm.spawn(
-                    "dmenu_run",
+                    &"dmenu_run",
                     &[
                         "-m",
                         "0",
@@ -234,7 +241,12 @@ where
             KeyBind::new(VirtualKeyCode::Return)
                 .with_mod(self.config.mod_key)
                 .with_mod(ModifierKey::Shift),
-            |wm, _| wm.spawn("alacritty", &[]),
+            |wm, _| {
+                wm.spawn(
+                    &wm.config.terminal_command.0,
+                    &wm.config.terminal_command.1,
+                )
+            },
         ));
 
         self.add_keybind(KeyBinding::new(
@@ -848,12 +860,25 @@ where
         }
     }
 
-    pub fn spawn(&self, command: &str, args: &[&str]) {
-        info!("spawn: {:?} {:?}", command, args.join(" "));
-        match std::process::Command::new(command).args(args).spawn() {
+    pub fn spawn<'a, S, I>(&self, command: S, args: I)
+    where
+        S: AsRef<str> + AsRef<std::ffi::OsStr>,
+        I: IntoIterator<Item = S> + std::fmt::Debug,
+    {
+        info!("spawn: {:?} {:?}", AsRef::<str>::as_ref(&command), args);
+        match std::process::Command::new(AsRef::<std::ffi::OsStr>::as_ref(
+            &command,
+        ))
+        .args(args)
+        .spawn()
+        {
             Ok(_) => {}
             Err(err) => {
-                error!("Failed to spawn {:?}: {:?}", command, err);
+                error!(
+                    "Failed to spawn {:?}: {:?}",
+                    AsRef::<str>::as_ref(&command),
+                    err
+                );
             }
         }
     }
