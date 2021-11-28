@@ -11,10 +11,8 @@ use state::WMConfig;
 
 mod backends;
 mod clients;
-//mod clients2;
 mod state;
 mod util;
-mod xlib;
 
 pub mod error {
     use thiserror::Error;

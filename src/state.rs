@@ -253,6 +253,13 @@ where
 
         self.add_vs_switch_keybinds();
 
+        // add all already existing windows to the WM
+        if let Some(windows) = self.backend.all_windows() {
+            windows
+                .into_iter()
+                .for_each(|window| self.new_client(window));
+        }
+
         self
     }
 

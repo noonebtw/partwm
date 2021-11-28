@@ -38,7 +38,7 @@ pub trait WindowServerBackend {
     fn ungrab_cursor(&self);
     fn move_cursor(&self, window: Option<Self::Window>, position: Point<i32>);
 
-    fn all_windows(&self) -> Vec<Self::Window>;
+    fn all_windows(&self) -> Option<Vec<Self::Window>>;
 
     fn resize_window(&self, window: Self::Window, new_size: Point<i32>) {
         self.configure_window(window, Some(new_size), None, None);

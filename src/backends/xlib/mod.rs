@@ -858,8 +858,32 @@ impl WindowServerBackend for XLib {
         }
     }
 
-    fn all_windows(&self) -> Vec<Self::Window> {
-        todo!()
+    fn all_windows(&self) -> Option<Vec<Self::Window>> {
+        let mut parent = 0;
+        let mut root = 0;
+        let mut children = std::ptr::null_mut();
+        let mut num_children = 0;
+
+        unsafe {
+            xlib::XQueryTree(
+                self.dpy(),
+                self.root,
+                &mut root,
+                &mut parent,
+                &mut children,
+                &mut num_children,
+            ) != 0
+        }
+        .then(|| {
+            let windows = unsafe {
+                std::slice::from_raw_parts(children, num_children as usize)
+                    .to_vec()
+            };
+
+            unsafe { xlib::XFree(children as *mut _) };
+
+            windows
+        })
     }
 }
 
