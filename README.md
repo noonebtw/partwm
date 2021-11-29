@@ -1,4 +1,5 @@
-# Unnamed WM
+# No WM
+## formerly Unnamed
 
 This Project is a x11 tiling window manager written in Rust and losely based on / inspired by suckless' [dwm](https://dwm.suckless.org/).
 
@@ -11,5 +12,5 @@ Both `M-S-T` and `M-S-RET` will spawn an instance of `xterm`, `M-q` will kill th
 
 One big difference from dwm is the way I handle virtual screens, although this is mostly a placeholder mechanic that I will most likely change in the future. Currently I have 3 (or more) virtual screens in a list that can be rotated with `M-left` and `M-right`.
 
-Unnamed WM also has optional gaps :^)
-![Unnamed WM in a VM](/vm-ss.png)
+No WM also has optional gaps :^)
+![No WM in a VM](/vm-ss.png)

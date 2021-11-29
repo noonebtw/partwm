@@ -53,6 +53,12 @@ impl KeyOrButton {
 #[derive(Clone)]
 pub struct Display(Rc<*mut xlib::Display>);
 
+impl Drop for XLib {
+    fn drop(&mut self) {
+        self.close_dpy();
+    }
+}
+
 impl XLib {
     pub fn new() -> Self {
         let (display, _screen, root) = unsafe {
@@ -268,16 +274,16 @@ impl XLib {
 
     pub fn move_resize_client(&self, client: &Client) {
         let mut windowchanges = xlib::XWindowChanges {
-            x: client.position.0,
-            y: client.position.1,
-            width: client.size.0,
-            height: client.size.1,
+            x: client.position.x,
+            y: client.position.y,
+            width: client.size.x,
+            height: client.size.y,
             border_width: 0,
             sibling: 0,
             stack_mode: 0,
         };
 
-        if client.size.0 < 1 || client.size.1 < 1 {
+        if client.size.x < 1 || client.size.y < 1 {
             error!("client {:?} size is less than 1 pixel!", client);
         } else {
             unsafe {
@@ -297,16 +303,16 @@ impl XLib {
 
     pub fn move_client(&self, client: &Client) {
         let mut wc = xlib::XWindowChanges {
-            x: client.position.0,
-            y: client.position.1,
-            width: client.size.0,
-            height: client.size.1,
+            x: client.position.x,
+            y: client.position.y,
+            width: client.size.x,
+            height: client.size.y,
             border_width: 0,
             sibling: 0,
             stack_mode: 0,
         };
 
-        if client.size.0 < 1 || client.size.1 < 1 {
+        if client.size.x < 1 || client.size.y < 1 {
             error!("client {:?} size is less than 1 pixel!", client);
         } else {
             unsafe {
@@ -322,16 +328,16 @@ impl XLib {
 
     pub fn resize_client(&self, client: &Client) {
         let mut wc = xlib::XWindowChanges {
-            x: client.position.0,
-            y: client.position.1,
-            width: client.size.0,
-            height: client.size.1,
+            x: client.position.x,
+            y: client.position.y,
+            width: client.size.x,
+            height: client.size.y,
             border_width: 0,
             sibling: 0,
             stack_mode: 0,
         };
 
-        if client.size.0 < 1 || client.size.1 < 1 {
+        if client.size.x < 1 || client.size.y < 1 {
             error!("client {:?} size is less than 1 pixel!", client);
         } else {
             unsafe {
@@ -347,16 +353,16 @@ impl XLib {
 
     pub fn hide_client(&self, client: &Client) {
         let mut wc = xlib::XWindowChanges {
-            x: client.size.0 * -2,
-            y: client.position.1,
-            width: client.size.0,
-            height: client.size.1,
+            x: client.size.x * -2,
+            y: client.position.y,
+            width: client.size.x,
+            height: client.size.y,
             border_width: 0,
             sibling: 0,
             stack_mode: 0,
         };
 
-        if client.size.0 < 1 || client.size.1 < 1 {
+        if client.size.x < 1 || client.size.y < 1 {
             error!("client {:?} size is less than 1 pixel!", client);
         } else {
             unsafe {
@@ -391,6 +397,7 @@ impl XLib {
         }
     }
 
+    #[allow(dead_code)]
     fn get_window_attributes(
         &self,
         window: Window,
@@ -421,10 +428,12 @@ impl XLib {
         }
     }
 
+    #[allow(dead_code)]
     pub fn expose_client(&self, client: &Client) {
         self.expose_window(client.window);
     }
 
+    #[allow(dead_code)]
     fn expose_window(&self, window: Window) {
         if let Some(wa) = self.get_window_attributes(window) {
             unsafe {
@@ -468,10 +477,10 @@ impl XLib {
             display: self.dpy(),
             event: client.window,
             window: client.window,
-            x: client.position.0,
-            y: client.position.1,
-            width: client.size.0,
-            height: client.size.1,
+            x: client.position.x,
+            y: client.position.y,
+            width: client.size.x,
+            height: client.size.y,
             border_width: border,
             override_redirect: 0,
             send_event: 0,
@@ -527,7 +536,7 @@ impl XLib {
         }
     }
 
-    pub fn close_dpy(&self) {
+    fn close_dpy(&self) {
         unsafe {
             XCloseDisplay(self.dpy());
         }

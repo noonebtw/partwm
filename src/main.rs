@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use log::{debug, error, info, trace, warn};
 use log4rs::{
     append::{console::ConsoleAppender, file::FileAppender},
@@ -7,11 +9,30 @@ use log4rs::{
 };
 use state::WMConfig;
 
+mod backends;
 mod clients;
-//mod clients2;
 mod state;
 mod util;
-mod xlib;
+
+pub mod error {
+    use thiserror::Error;
+
+    #[derive(Debug, Error)]
+    pub enum Error {
+        #[error("placeholder error for Result<T> as Option<T>")]
+        NonError,
+        #[error("Unknown Event")]
+        UnknownEvent,
+        #[error("Unhandled VirtualKeyCode")]
+        UnhandledVirtualKeyCode,
+        #[error(transparent)]
+        IoError(#[from] std::io::Error),
+        #[error(transparent)]
+        FmtError(#[from] std::fmt::Error),
+        #[error(transparent)]
+        XlibError(#[from] crate::backends::xlib::XlibError),
+    }
+}
 
 fn init_logger() {
     let encoder = Box::new(PatternEncoder::new(
@@ -46,7 +67,23 @@ fn main() {
 
     log_prologue();
 
-    state::WindowManager::new(WMConfig::default()).run();
+    let mut config_path = std::path::PathBuf::from(env!("HOME"));
+    config_path.push(".config/nowm.toml");
+
+    let config = std::fs::File::open(config_path)
+        .and_then(|mut file| {
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(content)
+        })
+        .and_then(|content| Ok(toml::from_str::<WMConfig>(&content)?))
+        .unwrap_or_else(|e| {
+            warn!("error parsing config file: {}", e);
+            info!("falling back to default config.");
+            WMConfig::default()
+        });
+
+    state::WindowManager::<backends::xlib::XLib>::new(config).run();
 }
 
 fn log_prologue() {

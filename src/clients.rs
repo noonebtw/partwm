@@ -4,6 +4,7 @@ use std::{ops::Rem, usize};
 use indexmap::IndexMap;
 use log::{error, info};
 
+use crate::backends::window_event::Point;
 use crate::util::BuildIdentityHasher;
 
 mod client {
@@ -11,11 +12,13 @@ mod client {
 
     use x11::xlib::Window;
 
+    use crate::backends::window_event::Point;
+
     #[derive(Clone, Debug)]
     pub struct Client {
         pub(crate) window: Window,
-        pub(crate) size: (i32, i32),
-        pub(crate) position: (i32, i32),
+        pub(crate) size: Point<i32>,
+        pub(crate) position: Point<i32>,
         pub(crate) transient_for: Option<Window>,
     }
 
@@ -23,8 +26,8 @@ mod client {
         fn default() -> Self {
             Self {
                 window: 0,
-                size: (100, 100),
-                position: (0, 0),
+                size: (100, 100).into(),
+                position: (0, 0).into(),
                 transient_for: None,
             }
         }
@@ -34,8 +37,8 @@ mod client {
         #[allow(dead_code)]
         pub fn new(
             window: Window,
-            size: (i32, i32),
-            position: (i32, i32),
+            size: Point<i32>,
+            position: Point<i32>,
         ) -> Self {
             Self {
                 window,
@@ -47,7 +50,7 @@ mod client {
 
         pub fn new_transient(
             window: Window,
-            size: (i32, i32),
+            size: Point<i32>,
             transient: Window,
         ) -> Self {
             Self {
@@ -140,7 +143,7 @@ pub struct ClientState {
     pub(self) virtual_screens: VirtualScreenStore,
 
     pub(self) gap: i32,
-    pub(self) screen_size: (i32, i32),
+    pub(self) screen_size: Point<i32>,
     pub(self) master_size: f32,
     border_size: i32,
 }
@@ -166,7 +169,7 @@ impl Default for ClientState {
             focused: None,
             virtual_screens: VirtualScreenStore::new(1),
             gap: 0,
-            screen_size: (1, 1),
+            screen_size: (1, 1).into(),
             master_size: 1.0,
             border_size: 0,
         }
@@ -189,7 +192,7 @@ impl ClientState {
         }
     }
 
-    pub fn with_screen_size(self, screen_size: (i32, i32)) -> Self {
+    pub fn with_screen_size(self, screen_size: Point<i32>) -> Self {
         Self {
             screen_size,
             ..self
@@ -207,6 +210,7 @@ impl ClientState {
         self.border_size
     }
 
+    #[allow(dead_code)]
     pub fn set_border_mut(&mut self, new: i32) {
         self.border_size = new;
     }
@@ -221,11 +225,12 @@ impl ClientState {
 
             client.position = {
                 (
-                    transient.position.0
-                        + (transient.size.0 - client.size.0) / 2,
-                    transient.position.1
-                        + (transient.size.1 - client.size.1) / 2,
+                    transient.position.x
+                        + (transient.size.x - client.size.x) / 2,
+                    transient.position.y
+                        + (transient.size.y - client.size.y) / 2,
                 )
+                    .into()
             };
 
             self.floating_clients.insert(key, client);
@@ -283,7 +288,7 @@ impl ClientState {
             .filter(move |&(k, _)| self.is_client_visible(k))
     }
 
-    fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
+    pub fn iter_all_clients(&self) -> impl Iterator<Item = (&u64, &Client)> {
         self.floating_clients.iter().chain(self.clients.iter())
     }
 
@@ -532,7 +537,9 @@ impl ClientState {
     {
         let (new, old) = self.focus_client_inner(key);
 
-        info!("Swapping focus: new({:?}) old({:?})", new, old);
+        if !(new.is_vacant() && old.is_vacant()) {
+            info!("Swapping focus: new({:?}) old({:?})", new, old);
+        }
 
         (new, old)
     }
@@ -622,7 +629,7 @@ impl ClientState {
     */
     pub fn arrange_virtual_screen(&mut self) {
         let gap = self.gap;
-        let (width, height) = self.screen_size;
+        let (width, height) = self.screen_size.as_tuple();
 
         // should be fine to unwrap since we will always have at least 1 virtual screen
         let vs = self.virtual_screens.get_mut_current();
@@ -669,8 +676,8 @@ impl ClientState {
 
             if let Some(client) = self.clients.get_mut(key) {
                 *client = Client {
-                    size,
-                    position,
+                    size: size.into(),
+                    position: position.into(),
                     ..*client
                 };
             }
@@ -688,8 +695,8 @@ impl ClientState {
 
             if let Some(client) = self.clients.get_mut(key) {
                 *client = Client {
-                    size,
-                    position,
+                    size: size.into(),
+                    position: position.into(),
                     ..*client
                 };
             }
@@ -851,7 +858,7 @@ impl VirtualScreenStore {
     fn go_to_nth(&mut self, n: usize) -> usize {
         self.last_idx = Some(self.current_idx);
 
-        self.current_idx = n % self.screens.len();
+        self.current_idx = n.min(self.screens.len() - 1);
 
         self.current_idx
     }
