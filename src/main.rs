@@ -7,32 +7,8 @@ use log4rs::{
     encode::pattern::PatternEncoder,
     Config,
 };
-use state::WMConfig;
 
-mod backends;
-mod clients;
-mod state;
-mod util;
-
-pub mod error {
-    use thiserror::Error;
-
-    #[derive(Debug, Error)]
-    pub enum Error {
-        #[error("placeholder error for Result<T> as Option<T>")]
-        NonError,
-        #[error("Unknown Event")]
-        UnknownEvent,
-        #[error("Unhandled VirtualKeyCode")]
-        UnhandledVirtualKeyCode,
-        #[error(transparent)]
-        IoError(#[from] std::io::Error),
-        #[error(transparent)]
-        FmtError(#[from] std::fmt::Error),
-        #[error(transparent)]
-        XlibError(#[from] crate::backends::xlib::XlibError),
-    }
-}
+use wm::state::WMConfig;
 
 fn init_logger() {
     let encoder = Box::new(PatternEncoder::new(
@@ -83,7 +59,7 @@ fn main() {
             WMConfig::default()
         });
 
-    state::WindowManager::<backends::xlib::XLib>::new(config).run();
+    wm::state::WindowManager::<wm::backends::xlib::XLib>::new(config).run();
 }
 
 fn log_prologue() {
@@ -102,7 +78,6 @@ fn log_prologue() {
 #[test]
 fn test_logger() {
     init_logger();
-    // asdf
 
     log_prologue();
 }
