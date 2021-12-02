@@ -758,42 +758,45 @@ where
     fn start_move_resize_window(&mut self, event: &ButtonEvent<B::Window>) {
         let window = event.window; // xev.subwindow
 
-        match event.keycode {
-            MouseButton::Left => {
-                if self.clients.set_floating(&window) {
-                    self.arrange_clients();
+        if !self.clients.get(&window).is_fullscreen() {
+            match event.keycode {
+                MouseButton::Left => {
+                    if self.clients.set_floating(&window) {
+                        self.arrange_clients();
+                    }
+
+                    self.move_resize_window =
+                        MoveResizeInfo::Move(MoveInfoInner {
+                            window,
+                            starting_cursor_pos: event.cursor_position,
+                            starting_window_pos: self
+                                .clients
+                                .get(&window)
+                                .unwrap()
+                                .position,
+                        });
                 }
+                MouseButton::Right => {
+                    if self.clients.set_floating(&window) {
+                        self.arrange_clients();
+                    }
 
-                self.move_resize_window = MoveResizeInfo::Move(MoveInfoInner {
-                    window,
-                    starting_cursor_pos: event.cursor_position,
-                    starting_window_pos: self
-                        .clients
-                        .get(&window)
-                        .unwrap()
-                        .position,
-                });
-            }
-            MouseButton::Right => {
-                if self.clients.set_floating(&window) {
-                    self.arrange_clients();
+                    let client = self.clients.get(&window).unwrap();
+
+                    let corner_pos = client.position + client.size.into();
+
+                    self.backend.move_cursor(None, corner_pos.into());
+                    self.backend.grab_cursor();
+
+                    self.move_resize_window =
+                        MoveResizeInfo::Resize(ResizeInfoInner {
+                            window,
+                            starting_cursor_pos: corner_pos.into(),
+                            starting_window_size: client.size,
+                        });
                 }
-
-                let client = self.clients.get(&window).unwrap();
-
-                let corner_pos = client.position + client.size.into();
-
-                self.backend.move_cursor(None, corner_pos.into());
-                self.backend.grab_cursor();
-
-                self.move_resize_window =
-                    MoveResizeInfo::Resize(ResizeInfoInner {
-                        window,
-                        starting_cursor_pos: corner_pos.into(),
-                        starting_window_size: client.size,
-                    });
+                _ => {}
             }
-            _ => {}
         }
     }
 

@@ -2,6 +2,7 @@ use std::{ops::Rem, usize};
 
 use indexmap::IndexMap;
 use log::error;
+use num_traits::Zero;
 
 use crate::util::BuildIdentityHasher;
 use crate::util::{Point, Size};
@@ -457,13 +458,20 @@ impl ClientState {
     where
         K: ClientKey,
     {
-        self.get_mut(key)
-            .into_option()
-            .map(|client| {
-                client.toggle_fullscreen();
+        let fullscreen_size = self.screen_size
+            - Size::new(self.border_size * 2, self.border_size * 2);
+
+        match self.get_mut(key).into_option() {
+            Some(client) => {
+                if client.toggle_fullscreen() {
+                    client.size = fullscreen_size;
+                    client.position = Point::zero();
+                }
+
                 true
-            })
-            .unwrap_or(false)
+            }
+            None => false,
+        }
     }
 
     /**
@@ -491,35 +499,48 @@ impl ClientState {
     where
         K: ClientKey,
     {
-        let key = key.key();
-        let client = self.clients.remove(&key);
-        let floating_client = self.floating_clients.remove(&key);
+        // do nothing if either no client matches the key or the client is fullscreen.
+        // FIXME: this should probably disable fullscreen mode (but that has to
+        // be handled in the wm state so that the backend can notify the client
+        // that it is no longer fullscreen)
+        if !self
+            .get(key)
+            .into_option()
+            .map(|c| c.is_fullscreen())
+            .unwrap_or(true)
+        {
+            let key = key.key();
+            let client = self.clients.remove(&key);
+            let floating_client = self.floating_clients.remove(&key);
 
-        match (client, floating_client) {
-            (Some(client), None) => {
-                self.floating_clients.insert(key, client);
-                self.remove_from_virtual_screens(&key);
-            }
-            (None, Some(floating_client)) => {
-                // transient clients cannot be tiled
-                match floating_client.is_transient() {
-                    true => {
-                        self.floating_clients.insert(key, floating_client);
-                    }
+            match (client, floating_client) {
+                (Some(client), None) => {
+                    self.floating_clients.insert(key, client);
+                    self.remove_from_virtual_screens(&key);
+                }
+                (None, Some(floating_client)) => {
+                    // transient clients cannot be tiled
+                    match floating_client.is_transient() {
+                        true => {
+                            self.floating_clients.insert(key, floating_client);
+                        }
 
-                    false => {
-                        self.clients.insert(key, floating_client);
-                        self.virtual_screens.get_mut_current().insert(&key);
+                        false => {
+                            self.clients.insert(key, floating_client);
+                            self.virtual_screens.get_mut_current().insert(&key);
+                        }
                     }
                 }
-            }
-            _ => {
-                error!("wtf? Client was present in tiled and floating list.")
-            }
-        };
+                _ => {
+                    error!(
+                        "wtf? Client was present in tiled and floating list."
+                    )
+                }
+            };
 
-        // we added or removed a client from the tiling so the layout changed, rearrange
-        self.arrange_virtual_screen();
+            // we added or removed a client from the tiling so the layout changed, rearrange
+            self.arrange_virtual_screen();
+        }
     }
 
     fn remove_from_virtual_screens<K>(&mut self, key: &K)
@@ -1005,5 +1026,27 @@ impl<T> ClientEntry<T> {
     #[allow(dead_code)]
     pub fn is_occupied(&self) -> bool {
         !self.is_vacant()
+    }
+}
+
+impl ClientEntry<&client::Client> {
+    pub fn is_fullscreen(&self) -> bool {
+        match self {
+            ClientEntry::Tiled(c) | ClientEntry::Floating(c) => {
+                c.is_fullscreen()
+            }
+            ClientEntry::Vacant => false,
+        }
+    }
+}
+
+impl ClientEntry<&mut client::Client> {
+    pub fn is_fullscreen(&self) -> bool {
+        match self {
+            ClientEntry::Tiled(c) | ClientEntry::Floating(c) => {
+                c.is_fullscreen()
+            }
+            ClientEntry::Vacant => false,
+        }
     }
 }
