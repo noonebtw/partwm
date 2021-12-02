@@ -2,10 +2,10 @@ use std::num::NonZeroI32;
 use std::{ops::Rem, usize};
 
 use indexmap::IndexMap;
-use log::{error, info};
+use log::error;
 
-use crate::backends::window_event::Point;
 use crate::util::BuildIdentityHasher;
+use crate::util::{Point, Size};
 
 mod client {
     use std::hash::{Hash, Hasher};
@@ -538,7 +538,7 @@ impl ClientState {
         let (new, old) = self.focus_client_inner(key);
 
         if !(new.is_vacant() && old.is_vacant()) {
-            info!("Swapping focus: new({:?}) old({:?})", new, old);
+            //info!("Swapping focus: new({:?}) old({:?})", new, old);
         }
 
         (new, old)

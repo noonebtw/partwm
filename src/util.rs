@@ -22,3 +22,136 @@ impl Hasher for IdentityHasher {
 }
 
 pub type BuildIdentityHasher = BuildHasherDefault<IdentityHasher>;
+
+pub use point::Point;
+pub use size::Size;
+
+mod size {
+    #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+    pub struct Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        pub width: I,
+        pub height: I,
+    }
+
+    impl<I> Default for Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn default() -> Self {
+            Self {
+                width: I::zero(),
+                height: I::zero(),
+            }
+        }
+    }
+
+    impl<I> From<(I, I)> for Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn from(value: (I, I)) -> Self {
+            Self::from_tuple(value)
+        }
+    }
+
+    impl<I> From<super::point::Point<I>> for Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn from(value: super::point::Point<I>) -> Self {
+            Self::new(value.x, value.y)
+        }
+    }
+
+    impl<I> Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        pub fn new(width: I, height: I) -> Self {
+            Self { width, height }
+        }
+
+        pub fn from_tuple(tuple: (I, I)) -> Self {
+            Self::new(tuple.0, tuple.1)
+        }
+
+        pub fn as_tuple(&self) -> (I, I) {
+            (self.width, self.height)
+        }
+
+        pub fn map<F>(self, f: F) -> Self
+        where
+            F: FnOnce(I, I) -> Self,
+        {
+            f(self.width, self.height)
+        }
+    }
+}
+
+mod point {
+    #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
+    pub struct Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        pub x: I,
+        pub y: I,
+    }
+
+    impl<I> Default for Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn default() -> Self {
+            Self {
+                x: I::zero(),
+                y: I::zero(),
+            }
+        }
+    }
+
+    impl<I> From<(I, I)> for Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn from(value: (I, I)) -> Self {
+            Self::from_tuple(value)
+        }
+    }
+
+    impl<I> From<super::size::Size<I>> for Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn from(value: super::size::Size<I>) -> Self {
+            Self::new(value.width, value.height)
+        }
+    }
+
+    impl<I> Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        pub fn new(x: I, y: I) -> Self {
+            Self { x, y }
+        }
+
+        pub fn from_tuple(tuple: (I, I)) -> Self {
+            Self::new(tuple.0, tuple.1)
+        }
+
+        pub fn as_tuple(&self) -> (I, I) {
+            (self.x, self.y)
+        }
+
+        pub fn map<F, T>(self, f: F) -> T
+        where
+            F: FnOnce(I, I) -> T,
+        {
+            f(self.x, self.y)
+        }
+    }
+}

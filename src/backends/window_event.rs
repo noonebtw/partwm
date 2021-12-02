@@ -129,42 +129,7 @@ impl<Window> KeyEvent<Window> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
-pub struct Point<I>
-where
-    I: Copy + Clone + PartialEq + PartialOrd,
-{
-    pub x: I,
-    pub y: I,
-}
-impl<I> From<(I, I)> for Point<I>
-where
-    I: Copy + Clone + PartialEq + PartialOrd,
-{
-    fn from(value: (I, I)) -> Self {
-        Self::from_tuple(value)
-    }
-}
-
-impl<I> Point<I>
-where
-    I: Copy + Clone + PartialEq + PartialOrd,
-{
-    pub fn new(x: I, y: I) -> Self {
-        Self { x, y }
-    }
-
-    pub fn from_tuple(tuple: (I, I)) -> Self {
-        Self {
-            x: tuple.0,
-            y: tuple.1,
-        }
-    }
-
-    pub fn as_tuple(&self) -> (I, I) {
-        (self.x, self.y)
-    }
-}
+pub use crate::util::Point;
 
 #[derive(Debug)]
 pub struct ButtonEvent<Window> {
