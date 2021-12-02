@@ -8,9 +8,9 @@ use crate::{
     backends::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
-            ButtonEvent, ConfigureEvent, FullscreenEvent, KeyBind, KeyEvent,
-            KeyState, MapEvent, ModifierKey, ModifierState, MotionEvent,
-            MouseBind, Point, WindowEvent,
+            ButtonEvent, ConfigureEvent, FullscreenEvent, FullscreenState,
+            KeyBind, KeyEvent, KeyState, MapEvent, ModifierKey, ModifierState,
+            MotionEvent, MouseBind, Point, WindowEvent,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -469,6 +469,20 @@ where
                     state,
                 }) => {
                     info!("FullscreenEvent for window {}: {:?}", window, state);
+
+                    if match state {
+                        FullscreenState::On => {
+                            self.clients.set_fullscreen(&window, true)
+                        }
+                        FullscreenState::Off => {
+                            self.clients.set_fullscreen(&window, false)
+                        }
+                        FullscreenState::Toggle => {
+                            self.clients.toggle_fullscreen(&window)
+                        }
+                    } {
+                        self.arrange_clients();
+                    }
                 }
 
                 // i dont think i actually have to handle destroy notify events.
@@ -657,6 +671,12 @@ where
 
         self.clients
             .iter_transient()
+            .for_each(|(_, c)| self.backend.raise_window(c.window));
+
+        //raise fullscreen windows
+        self.clients
+            .iter_current_screen()
+            .filter(|(_, c)| c.is_fullscreen())
             .for_each(|(_, c)| self.backend.raise_window(c.window));
     }
 
