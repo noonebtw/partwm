@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use super::keycodes::{KeyOrButton, MouseButton, VirtualKeyCode};
+use crate::util::{Point, Size};
 use bitflags::bitflags;
 
 #[derive(Debug)]
@@ -129,43 +130,6 @@ impl<Window> KeyEvent<Window> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
-pub struct Point<I>
-where
-    I: Copy + Clone + PartialEq + PartialOrd,
-{
-    pub x: I,
-    pub y: I,
-}
-impl<I> From<(I, I)> for Point<I>
-where
-    I: Copy + Clone + PartialEq + PartialOrd,
-{
-    fn from(value: (I, I)) -> Self {
-        Self::from_tuple(value)
-    }
-}
-
-impl<I> Point<I>
-where
-    I: Copy + Clone + PartialEq + PartialOrd,
-{
-    pub fn new(x: I, y: I) -> Self {
-        Self { x, y }
-    }
-
-    pub fn from_tuple(tuple: (I, I)) -> Self {
-        Self {
-            x: tuple.0,
-            y: tuple.1,
-        }
-    }
-
-    pub fn as_tuple(&self) -> (I, I) {
-        (self.x, self.y)
-    }
-}
-
 #[derive(Debug)]
 pub struct ButtonEvent<Window> {
     pub window: Window,
@@ -235,11 +199,11 @@ impl<Window> DestroyEvent<Window> {
 pub struct CreateEvent<Window> {
     pub window: Window,
     pub position: Point<i32>,
-    pub size: Point<i32>,
+    pub size: Size<i32>,
 }
 
 impl<Window> CreateEvent<Window> {
-    pub fn new(window: Window, position: Point<i32>, size: Point<i32>) -> Self {
+    pub fn new(window: Window, position: Point<i32>, size: Size<i32>) -> Self {
         Self {
             window,
             position,
@@ -252,11 +216,11 @@ impl<Window> CreateEvent<Window> {
 pub struct ConfigureEvent<Window> {
     pub window: Window,
     pub position: Point<i32>,
-    pub size: Point<i32>,
+    pub size: Size<i32>,
 }
 
 impl<Window> ConfigureEvent<Window> {
-    pub fn new(window: Window, position: Point<i32>, size: Point<i32>) -> Self {
+    pub fn new(window: Window, position: Point<i32>, size: Size<i32>) -> Self {
         Self {
             window,
             position,
@@ -266,17 +230,30 @@ impl<Window> ConfigureEvent<Window> {
 }
 
 #[derive(Debug)]
+pub enum FullscreenState {
+    On,
+    Off,
+    Toggle,
+}
+
+impl From<bool> for FullscreenState {
+    fn from(value: bool) -> Self {
+        match value {
+            true => Self::On,
+            false => Self::Off,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct FullscreenEvent<Window> {
-    window: Window,
-    new_fullscreen: bool,
+    pub window: Window,
+    pub state: FullscreenState,
 }
 
 impl<Window> FullscreenEvent<Window> {
-    pub fn new(window: Window, new_fullscreen: bool) -> Self {
-        Self {
-            window,
-            new_fullscreen,
-        }
+    pub fn new(window: Window, state: FullscreenState) -> Self {
+        Self { window, state }
     }
 }
 

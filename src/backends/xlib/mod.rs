@@ -1,5 +1,6 @@
 use log::{error, warn};
-use std::{ffi::CString, rc::Rc};
+use num_traits::Zero;
+use std::{ffi::CString, mem::MaybeUninit, rc::Rc};
 
 use thiserror::Error;
 
@@ -17,12 +18,13 @@ use self::keysym::{
 use super::{
     keycodes::VirtualKeyCode,
     window_event::{
-        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, KeyEvent,
-        KeyOrMouseBind, KeyState, MapEvent, ModifierState, MotionEvent, Point,
-        UnmapEvent, WindowEvent,
+        ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, FullscreenEvent,
+        FullscreenState, KeyEvent, KeyOrMouseBind, KeyState, MapEvent,
+        ModifierState, MotionEvent, UnmapEvent, WindowEvent,
     },
     WindowServerBackend,
 };
+use crate::util::{Point, Size};
 
 pub mod color;
 pub mod keysym;
@@ -285,6 +287,53 @@ impl XLib {
                     ))
                 })
             }
+            xlib::PropertyNotify => {
+                let ev = unsafe { &event.property };
+
+                (ev.atom == self.atoms.net_wm_window_type)
+                    .then(|| {
+                        (self.get_atom_property(
+                            ev.window,
+                            self.atoms.net_wm_state,
+                        ) == Some(self.atoms.net_wm_state_fullscreen))
+                        .then(|| {
+                            XLibWindowEvent::FullscreenEvent(
+                                FullscreenEvent::new(
+                                    ev.window,
+                                    FullscreenState::On,
+                                ),
+                            )
+                        })
+                    })
+                    .flatten()
+            }
+            xlib::ClientMessage => {
+                let ev = unsafe { &event.client_message };
+
+                (ev.message_type == self.atoms.net_wm_state)
+                    .then(|| {
+                        let data = ev.data.as_longs();
+                        (data[1] as u64 == self.atoms.net_wm_state_fullscreen
+                            || data[2] as u64
+                                == self.atoms.net_wm_state_fullscreen)
+                            .then(|| {
+                                XLibWindowEvent::FullscreenEvent(
+                                    FullscreenEvent::new(
+                                        ev.window,
+                                        match data[0] /* as u64 */ {
+                                            0 => FullscreenState::Off,
+                                            1 => FullscreenState::On,
+                                            2 => FullscreenState::Toggle,
+                                            _ => {
+                                                unreachable!()
+                                            }
+                                        },
+                                    ),
+                                )
+                            })
+                    })
+                    .flatten()
+            }
             _ => None,
         }
     }
@@ -305,6 +354,37 @@ impl XLib {
             Some(wa)
         } else {
             None
+        }
+    }
+
+    fn get_atom_property(
+        &self,
+        window: xlib::Window,
+        atom: xlib::Atom,
+    ) -> Option<xlib::Atom> {
+        let mut di = 0;
+        let mut dl0 = 0;
+        let mut dl1 = 0;
+        let mut da = 0;
+
+        let mut atom_out = MaybeUninit::<xlib::Atom>::zeroed();
+
+        unsafe {
+            (xlib::XGetWindowProperty(
+                self.dpy(),
+                window,
+                atom,
+                0,
+                std::mem::size_of::<xlib::Atom>() as i64,
+                0,
+                xlib::XA_ATOM,
+                &mut da,
+                &mut di,
+                &mut dl0,
+                &mut dl1,
+                atom_out.as_mut_ptr() as *mut _,
+            ) != 0)
+                .then(|| atom_out.assume_init())
         }
     }
 
@@ -726,8 +806,8 @@ impl WindowServerBackend for XLib {
     }
 
     fn hide_window(&self, window: Self::Window) {
-        let screen_size = self.screen_size();
-        self.move_window(window, screen_size);
+        let screen_size = self.screen_size() + Size::new(100, 100);
+        self.move_window(window, screen_size.into());
     }
 
     fn kill_window(&self, window: Self::Window) {
@@ -753,17 +833,17 @@ impl WindowServerBackend for XLib {
     fn configure_window(
         &self,
         window: Self::Window,
-        new_size: Option<super::window_event::Point<i32>>,
-        new_pos: Option<super::window_event::Point<i32>>,
+        new_size: Option<crate::util::Size<i32>>,
+        new_pos: Option<crate::util::Point<i32>>,
         new_border: Option<i32>,
     ) {
-        let position = new_pos.unwrap_or(Point::new(0, 0));
-        let size = new_size.unwrap_or(Point::new(0, 0));
+        let position = new_pos.unwrap_or(Point::zero());
+        let size = new_size.unwrap_or(Size::zero());
         let mut wc = xlib::XWindowChanges {
             x: position.x,
             y: position.y,
-            width: size.x,
-            height: size.y,
+            width: size.width,
+            height: size.height,
             border_width: new_border.unwrap_or(0),
             sibling: 0,
             stack_mode: 0,
@@ -789,7 +869,7 @@ impl WindowServerBackend for XLib {
         }
     }
 
-    fn screen_size(&self) -> Point<i32> {
+    fn screen_size(&self) -> Size<i32> {
         unsafe {
             let mut wa =
                 std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed();
@@ -802,7 +882,7 @@ impl WindowServerBackend for XLib {
         }
     }
 
-    fn get_window_size(&self, window: Self::Window) -> Option<Point<i32>> {
+    fn get_window_size(&self, window: Self::Window) -> Option<Size<i32>> {
         self.get_window_attributes(window)
             .map(|wa| (wa.width, wa.height).into())
     }

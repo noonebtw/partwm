@@ -1,7 +1,5 @@
-use super::{
-    window_event,
-    window_event::{KeyOrMouseBind, Point},
-};
+use super::window_event::{self, KeyOrMouseBind};
+use crate::util::{Point, Size};
 
 pub trait WindowServerBackend {
     type Window;
@@ -26,13 +24,13 @@ pub trait WindowServerBackend {
     fn configure_window(
         &self,
         window: Self::Window,
-        new_size: Option<Point<i32>>,
+        new_size: Option<Size<i32>>,
         new_pos: Option<Point<i32>>,
         new_border: Option<i32>,
     );
 
-    fn screen_size(&self) -> Point<i32>;
-    fn get_window_size(&self, window: Self::Window) -> Option<Point<i32>>;
+    fn screen_size(&self) -> Size<i32>;
+    fn get_window_size(&self, window: Self::Window) -> Option<Size<i32>>;
 
     fn grab_cursor(&self);
     fn ungrab_cursor(&self);
@@ -43,7 +41,7 @@ pub trait WindowServerBackend {
     fn set_active_window_border_color(&mut self, color_name: &str);
     fn set_inactive_window_border_color(&mut self, color_name: &str);
 
-    fn resize_window(&self, window: Self::Window, new_size: Point<i32>) {
+    fn resize_window(&self, window: Self::Window, new_size: Size<i32>) {
         self.configure_window(window, Some(new_size), None, None);
     }
 

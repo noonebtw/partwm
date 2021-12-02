@@ -1,25 +1,24 @@
-use std::num::NonZeroI32;
 use std::{ops::Rem, usize};
 
 use indexmap::IndexMap;
-use log::{error, info};
+use log::error;
 
-use crate::backends::window_event::Point;
 use crate::util::BuildIdentityHasher;
+use crate::util::{Point, Size};
 
 mod client {
     use std::hash::{Hash, Hasher};
 
+    use crate::util::{Point, Size};
     use x11::xlib::Window;
-
-    use crate::backends::window_event::Point;
 
     #[derive(Clone, Debug)]
     pub struct Client {
         pub(crate) window: Window,
-        pub(crate) size: Point<i32>,
+        pub(crate) size: Size<i32>,
         pub(crate) position: Point<i32>,
         pub(crate) transient_for: Option<Window>,
+        pub(crate) fullscreen: bool,
     }
 
     impl Default for Client {
@@ -29,6 +28,7 @@ mod client {
                 size: (100, 100).into(),
                 position: (0, 0).into(),
                 transient_for: None,
+                fullscreen: false,
             }
         }
     }
@@ -37,20 +37,20 @@ mod client {
         #[allow(dead_code)]
         pub fn new(
             window: Window,
-            size: Point<i32>,
+            size: Size<i32>,
             position: Point<i32>,
         ) -> Self {
             Self {
                 window,
                 size,
                 position,
-                transient_for: None,
+                ..Self::default()
             }
         }
 
         pub fn new_transient(
             window: Window,
-            size: Point<i32>,
+            size: Size<i32>,
             transient: Window,
         ) -> Self {
             Self {
@@ -66,6 +66,27 @@ mod client {
                 window,
                 ..Default::default()
             }
+        }
+
+        /// toggles the clients fullscreen flag.
+        /// returns `true` if the client is now fullscreen.
+        pub fn toggle_fullscreen(&mut self) -> bool {
+            self.fullscreen = !self.fullscreen;
+
+            self.is_fullscreen()
+        }
+
+        pub fn set_fullscreen(&mut self, fullscreen: bool) -> bool {
+            if self.fullscreen == fullscreen {
+                false
+            } else {
+                self.fullscreen = fullscreen;
+                true
+            }
+        }
+
+        pub fn is_fullscreen(&self) -> bool {
+            self.fullscreen
         }
 
         pub fn is_transient(&self) -> bool {
@@ -143,7 +164,7 @@ pub struct ClientState {
     pub(self) virtual_screens: VirtualScreenStore,
 
     pub(self) gap: i32,
-    pub(self) screen_size: Point<i32>,
+    pub(self) screen_size: Size<i32>,
     pub(self) master_size: f32,
     border_size: i32,
 }
@@ -192,7 +213,7 @@ impl ClientState {
         }
     }
 
-    pub fn with_screen_size(self, screen_size: Point<i32>) -> Self {
+    pub fn with_screen_size(self, screen_size: Size<i32>) -> Self {
         Self {
             screen_size,
             ..self
@@ -226,9 +247,9 @@ impl ClientState {
             client.position = {
                 (
                     transient.position.x
-                        + (transient.size.x - client.size.x) / 2,
+                        + (transient.size.width - client.size.width) / 2,
                     transient.position.y
-                        + (transient.size.y - client.size.y) / 2,
+                        + (transient.size.height - client.size.height) / 2,
                 )
                     .into()
             };
@@ -408,6 +429,43 @@ impl ClientState {
         self.arrange_virtual_screen();
     }
 
+    pub fn set_fullscreen<K>(&mut self, key: &K, fullscreen: bool) -> bool
+    where
+        K: ClientKey,
+    {
+        self.get(key)
+            .into_option()
+            .map(|client| client.is_fullscreen() != fullscreen)
+            .unwrap_or(false)
+            .then(|| self.toggle_fullscreen(key))
+            .unwrap_or(false)
+    }
+
+    pub fn toggle_fullscreen<K>(&mut self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        if self.inner_toggle_fullscreen(key) {
+            self.arrange_virtual_screen();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn inner_toggle_fullscreen<K>(&mut self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        self.get_mut(key)
+            .into_option()
+            .map(|client| {
+                client.toggle_fullscreen();
+                true
+            })
+            .unwrap_or(false)
+    }
+
     /**
     Sets a tiled client to floating and returns true, does nothing for a floating client and
     returns false. If this function returns `true` you have to call `arrange_clients` after.
@@ -538,7 +596,7 @@ impl ClientState {
         let (new, old) = self.focus_client_inner(key);
 
         if !(new.is_vacant() && old.is_vacant()) {
-            info!("Swapping focus: new({:?}) old({:?})", new, old);
+            //info!("Swapping focus: new({:?}) old({:?})", new, old);
         }
 
         (new, old)
@@ -635,49 +693,87 @@ impl ClientState {
         let vs = self.virtual_screens.get_mut_current();
         // if aux is empty -> width : width / 2
 
-        let (master_width, aux_width) = {
-            let effective_width = width - gap * 2;
+        let vs_width = width - gap * 2;
 
-            let master_size = if vs.aux.is_empty() {
+        let master_position = Point::new(0, 0);
+        let master_window_size = {
+            let factor = if vs.aux.is_empty() {
                 1.0
             } else {
                 self.master_size / 2.0
             };
 
-            let master_width = (effective_width as f32 * master_size) as i32;
-            let aux_width = effective_width - master_width;
+            let width = (vs_width as f32 * factor) as i32;
 
-            (master_width, aux_width)
+            // make sure we dont devide by 0
+            // height is max height / number of clients in the stack
+            let height = match vs.master.len() as i32 {
+                0 => 1,
+                n => (height - gap * 2) / n,
+            };
+
+            Size::new(width, height)
         };
 
-        // make sure we dont devide by 0
-        // height is max height / number of clients in the stack
-        let master_height = (height - gap * 2)
-            / match NonZeroI32::new(vs.master.len() as i32) {
-                Some(i) => i.get(),
-                None => 1,
+        let aux_position = Point::new(master_window_size.width, 0);
+        let aux_window_size = {
+            let width = vs_width - master_window_size.width;
+
+            // make sure we dont devide by 0
+            // height is max height / number of clients in the stack
+            let height = match vs.aux.len() as i32 {
+                0 => 1,
+                n => (height - gap * 2) / n,
             };
 
-        // height is max height / number of clients in the stack
-        let aux_height = (height - gap * 2)
-            / match NonZeroI32::new(vs.aux.len() as i32) {
-                Some(i) => i.get(),
-                None => 1,
-            };
+            Size::new(width, height)
+        };
+
+        fn calculate_window_dimensions(
+            screen_size: Size<i32>,
+            stack_size: Size<i32>,
+            stack_position: Point<i32>,
+            fullscreen: bool,
+            nth: i32,
+            gap: i32,
+            border: i32,
+        ) -> (Size<i32>, Point<i32>) {
+            if fullscreen {
+                let size = Size::new(
+                    screen_size.width - border * 2,
+                    screen_size.height - border * 2,
+                );
+                let pos = Point::new(0, 0);
+                (size, pos)
+            } else {
+                let size = Size::new(
+                    stack_size.width - gap * 2 - border * 2,
+                    stack_size.height - gap * 2 - border * 2,
+                );
+                let pos = Point::new(
+                    stack_position.x + gap * 2,
+                    stack_position.y + stack_size.height * nth + gap * 2,
+                );
+                (size, pos)
+            }
+        }
 
         // Master
         for (i, key) in vs.master.iter().enumerate() {
-            let size = (
-                master_width - gap * 2 - self.border_size * 2,
-                master_height - gap * 2 - self.border_size * 2,
-            );
-
-            let position = (gap * 2, master_height * i as i32 + gap * 2);
-
             if let Some(client) = self.clients.get_mut(key) {
+                let (size, position) = calculate_window_dimensions(
+                    self.screen_size.into(),
+                    master_window_size,
+                    master_position,
+                    client.is_fullscreen(),
+                    i as i32,
+                    gap,
+                    self.border_size,
+                );
+
                 *client = Client {
                     size: size.into(),
-                    position: position.into(),
+                    position,
                     ..*client
                 };
             }
@@ -685,18 +781,20 @@ impl ClientState {
 
         // Aux
         for (i, key) in vs.aux.iter().enumerate() {
-            let size = (
-                aux_width - gap * 2 - self.border_size * 2,
-                aux_height - gap * 2 - self.border_size * 2,
-            );
-
-            let position =
-                (master_width + gap * 2, aux_height * i as i32 + gap * 2);
-
             if let Some(client) = self.clients.get_mut(key) {
+                let (size, position) = calculate_window_dimensions(
+                    self.screen_size.into(),
+                    aux_window_size,
+                    aux_position,
+                    client.is_fullscreen(),
+                    i as i32,
+                    gap,
+                    self.border_size,
+                );
+
                 *client = Client {
                     size: size.into(),
-                    position: position.into(),
+                    position,
                     ..*client
                 };
             }
