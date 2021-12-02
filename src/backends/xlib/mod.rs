@@ -774,7 +774,7 @@ impl WindowServerBackend for XLib {
             if new_pos.is_some() {
                 mask |= xlib::CWX | xlib::CWY;
             }
-            if new_size.is_some() {
+            if new_size.is_some() && wc.width > 1 && wc.height > 1 {
                 mask |= xlib::CWWidth | xlib::CWHeight;
             }
             if new_border.is_some() {

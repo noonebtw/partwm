@@ -425,11 +425,11 @@ where
                     self.button_event(&event);
                 }
                 WindowEvent::MapRequestEvent(MapEvent { window }) => {
+                    self.backend.handle_event(event);
+
                     if !self.clients.contains(&window) {
                         self.new_client(window);
                     }
-
-                    self.backend.handle_event(event);
                 }
                 WindowEvent::UnmapEvent(event) => {
                     self.clients.remove(&event.window);
@@ -444,8 +444,17 @@ where
                 WindowEvent::ConfigureEvent(ConfigureEvent {
                     window, ..
                 }) => {
-                    if !self.clients.contains(&window) {
-                        self.backend.handle_event(event);
+                    match self.clients.get(&window) {
+                        ClientEntry::Tiled(client)
+                        | ClientEntry::Floating(client) => {
+                            self.backend.configure_window(
+                                window,
+                                Some(client.size),
+                                Some(client.position),
+                                None,
+                            )
+                        }
+                        ClientEntry::Vacant => self.backend.handle_event(event),
                     }
                     // TODO
                     // match self.clients.get(&event.window).into_option() {
@@ -520,7 +529,7 @@ where
     }
 
     fn rotate_virtual_screen(&mut self, dir: Direction) {
-        info!("rotateing VS: {:?}", dir);
+        info!("rotating VS: {:?}", dir);
 
         match dir {
             Direction::West(n) => self.clients.rotate_left(n),
@@ -713,6 +722,7 @@ where
             None,
             Some(self.clients.get_border()),
         );
+
         self.clients.insert(client).unwrap();
         self.arrange_clients();
 
@@ -800,8 +810,6 @@ where
                 }
             }
             MoveResizeInfo::Resize(info) => {
-                info!("do_resize: {:#?}", info);
-
                 let (x, y) = (
                     event.position.x - info.starting_cursor_pos.x,
                     event.position.y - info.starting_cursor_pos.y,
