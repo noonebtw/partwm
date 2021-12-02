@@ -8,9 +8,9 @@ use crate::{
     backends::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
-            ButtonEvent, ConfigureEvent, KeyBind, KeyEvent, KeyState, MapEvent,
-            ModifierKey, ModifierState, MotionEvent, MouseBind, Point,
-            WindowEvent,
+            ButtonEvent, ConfigureEvent, FullscreenEvent, KeyBind, KeyEvent,
+            KeyState, MapEvent, ModifierKey, ModifierState, MotionEvent,
+            MouseBind, Point, WindowEvent,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -463,6 +463,12 @@ where
                     //         .configure_client(client, self.clients.get_border()),
                     //     None => self.xlib.configure_window(event),
                     // }
+                }
+                WindowEvent::FullscreenEvent(FullscreenEvent {
+                    window,
+                    state,
+                }) => {
+                    info!("FullscreenEvent for window {}: {:?}", window, state);
                 }
 
                 // i dont think i actually have to handle destroy notify events.

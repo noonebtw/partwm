@@ -266,17 +266,30 @@ impl<Window> ConfigureEvent<Window> {
 }
 
 #[derive(Debug)]
+pub enum FullscreenState {
+    On,
+    Off,
+    Toggle,
+}
+
+impl From<bool> for FullscreenState {
+    fn from(value: bool) -> Self {
+        match value {
+            true => Self::On,
+            false => Self::Off,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct FullscreenEvent<Window> {
-    window: Window,
-    new_fullscreen: bool,
+    pub window: Window,
+    pub state: FullscreenState,
 }
 
 impl<Window> FullscreenEvent<Window> {
-    pub fn new(window: Window, new_fullscreen: bool) -> Self {
-        Self {
-            window,
-            new_fullscreen,
-        }
+    pub fn new(window: Window, state: FullscreenState) -> Self {
+        Self { window, state }
     }
 }
 
