@@ -1,4 +1,5 @@
 use log::{error, warn};
+use num_traits::Zero;
 use std::{ffi::CString, mem::MaybeUninit, rc::Rc};
 
 use thiserror::Error;
@@ -19,10 +20,11 @@ use super::{
     window_event::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, FullscreenEvent,
         FullscreenState, KeyEvent, KeyOrMouseBind, KeyState, MapEvent,
-        ModifierState, MotionEvent, Point, UnmapEvent, WindowEvent,
+        ModifierState, MotionEvent, UnmapEvent, WindowEvent,
     },
     WindowServerBackend,
 };
+use crate::util::{Point, Size};
 
 pub mod color;
 pub mod keysym;
@@ -804,8 +806,8 @@ impl WindowServerBackend for XLib {
     }
 
     fn hide_window(&self, window: Self::Window) {
-        let screen_size = self.screen_size();
-        self.move_window(window, screen_size);
+        let screen_size = self.screen_size() + Size::new(100, 100);
+        self.move_window(window, screen_size.into());
     }
 
     fn kill_window(&self, window: Self::Window) {
@@ -831,17 +833,17 @@ impl WindowServerBackend for XLib {
     fn configure_window(
         &self,
         window: Self::Window,
-        new_size: Option<super::window_event::Point<i32>>,
-        new_pos: Option<super::window_event::Point<i32>>,
+        new_size: Option<crate::util::Size<i32>>,
+        new_pos: Option<crate::util::Point<i32>>,
         new_border: Option<i32>,
     ) {
-        let position = new_pos.unwrap_or(Point::new(0, 0));
-        let size = new_size.unwrap_or(Point::new(0, 0));
+        let position = new_pos.unwrap_or(Point::zero());
+        let size = new_size.unwrap_or(Size::zero());
         let mut wc = xlib::XWindowChanges {
             x: position.x,
             y: position.y,
-            width: size.x,
-            height: size.y,
+            width: size.width,
+            height: size.height,
             border_width: new_border.unwrap_or(0),
             sibling: 0,
             stack_mode: 0,
@@ -867,7 +869,7 @@ impl WindowServerBackend for XLib {
         }
     }
 
-    fn screen_size(&self) -> Point<i32> {
+    fn screen_size(&self) -> Size<i32> {
         unsafe {
             let mut wa =
                 std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed();
@@ -880,7 +882,7 @@ impl WindowServerBackend for XLib {
         }
     }
 
-    fn get_window_size(&self, window: Self::Window) -> Option<Point<i32>> {
+    fn get_window_size(&self, window: Self::Window) -> Option<Size<i32>> {
         self.get_window_attributes(window)
             .map(|wa| (wa.width, wa.height).into())
     }

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use super::keycodes::{KeyOrButton, MouseButton, VirtualKeyCode};
+use crate::util::{Point, Size};
 use bitflags::bitflags;
 
 #[derive(Debug)]
@@ -129,8 +130,6 @@ impl<Window> KeyEvent<Window> {
     }
 }
 
-pub use crate::util::Point;
-
 #[derive(Debug)]
 pub struct ButtonEvent<Window> {
     pub window: Window,
@@ -200,11 +199,11 @@ impl<Window> DestroyEvent<Window> {
 pub struct CreateEvent<Window> {
     pub window: Window,
     pub position: Point<i32>,
-    pub size: Point<i32>,
+    pub size: Size<i32>,
 }
 
 impl<Window> CreateEvent<Window> {
-    pub fn new(window: Window, position: Point<i32>, size: Point<i32>) -> Self {
+    pub fn new(window: Window, position: Point<i32>, size: Size<i32>) -> Self {
         Self {
             window,
             position,
@@ -217,11 +216,11 @@ impl<Window> CreateEvent<Window> {
 pub struct ConfigureEvent<Window> {
     pub window: Window,
     pub position: Point<i32>,
-    pub size: Point<i32>,
+    pub size: Size<i32>,
 }
 
 impl<Window> ConfigureEvent<Window> {
-    pub fn new(window: Window, position: Point<i32>, size: Point<i32>) -> Self {
+    pub fn new(window: Window, position: Point<i32>, size: Size<i32>) -> Self {
         Self {
             window,
             position,

@@ -36,6 +36,47 @@ mod size {
         pub height: I,
     }
 
+    impl<I> std::ops::Add for Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        type Output = Self;
+
+        fn add(self, rhs: Self) -> Self::Output {
+            Self {
+                width: self.width + rhs.width,
+                height: self.height + rhs.height,
+            }
+        }
+    }
+
+    impl<I> std::ops::Sub for Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        type Output = Self;
+
+        fn sub(self, rhs: Self) -> Self::Output {
+            Self {
+                width: self.width - rhs.width,
+                height: self.height - rhs.height,
+            }
+        }
+    }
+
+    impl<I> num_traits::Zero for Size<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn zero() -> Self {
+            Self::default()
+        }
+
+        fn is_zero(&self) -> bool {
+            self.width == I::zero() && self.height == I::zero()
+        }
+    }
+
     impl<I> Default for Size<I>
     where
         I: num_traits::PrimInt + num_traits::Zero,
@@ -99,6 +140,47 @@ mod point {
     {
         pub x: I,
         pub y: I,
+    }
+
+    impl<I> std::ops::Add for Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        type Output = Self;
+
+        fn add(self, rhs: Self) -> Self::Output {
+            Self {
+                x: self.x + rhs.x,
+                y: self.y + rhs.y,
+            }
+        }
+    }
+
+    impl<I> std::ops::Sub for Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        type Output = Self;
+
+        fn sub(self, rhs: Self) -> Self::Output {
+            Self {
+                x: self.x - rhs.x,
+                y: self.y - rhs.y,
+            }
+        }
+    }
+
+    impl<I> num_traits::Zero for Point<I>
+    where
+        I: num_traits::PrimInt + num_traits::Zero,
+    {
+        fn zero() -> Self {
+            Self::default()
+        }
+
+        fn is_zero(&self) -> bool {
+            self.x == I::zero() && self.y == I::zero()
+        }
     }
 
     impl<I> Default for Point<I>

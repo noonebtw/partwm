@@ -4,13 +4,13 @@ use log::{error, info};
 
 use x11::xlib::{self, Window};
 
+use crate::util::{Point, Size};
 use crate::{
     backends::{
         keycodes::{MouseButton, VirtualKeyCode},
         window_event::{
-            ButtonEvent, ConfigureEvent, FullscreenEvent, FullscreenState,
-            KeyBind, KeyEvent, KeyState, MapEvent, ModifierKey, ModifierState,
-            MotionEvent, MouseBind, Point, WindowEvent,
+            ButtonEvent, ConfigureEvent, KeyBind, KeyEvent, KeyState, MapEvent,
+            ModifierKey, ModifierState, MotionEvent, MouseBind, WindowEvent,
         },
         xlib::XLib,
         WindowServerBackend,
@@ -105,7 +105,7 @@ struct MoveInfoInner {
 struct ResizeInfoInner {
     window: Window,
     starting_cursor_pos: Point<i32>,
-    starting_window_size: Point<i32>,
+    starting_window_size: Size<i32>,
 }
 
 use derivative::*;
@@ -464,26 +464,6 @@ where
                     //     None => self.xlib.configure_window(event),
                     // }
                 }
-                WindowEvent::FullscreenEvent(FullscreenEvent {
-                    window,
-                    state,
-                }) => {
-                    info!("FullscreenEvent for window {}: {:?}", window, state);
-
-                    if match state {
-                        FullscreenState::On => {
-                            self.clients.set_fullscreen(&window, true)
-                        }
-                        FullscreenState::Off => {
-                            self.clients.set_fullscreen(&window, false)
-                        }
-                        FullscreenState::Toggle => {
-                            self.clients.toggle_fullscreen(&window)
-                        }
-                    } {
-                        self.arrange_clients();
-                    }
-                }
 
                 // i dont think i actually have to handle destroy notify events.
                 // every window should be unmapped regardless
@@ -782,12 +762,7 @@ where
 
                 let client = self.clients.get(&window).unwrap();
 
-                let corner_pos = {
-                    (
-                        client.position.x + client.size.x,
-                        client.position.y + client.size.y,
-                    )
-                };
+                let corner_pos = client.position + client.size.into();
 
                 self.backend.move_cursor(None, corner_pos.into());
                 self.backend.grab_cursor();
@@ -846,8 +821,10 @@ where
                 {
                     let size = &mut client.size;
 
-                    size.x = std::cmp::max(1, info.starting_window_size.x + x);
-                    size.y = std::cmp::max(1, info.starting_window_size.y + y);
+                    size.width =
+                        std::cmp::max(1, info.starting_window_size.width + x);
+                    size.height =
+                        std::cmp::max(1, info.starting_window_size.height + y);
 
                     self.backend.resize_window(client.window, client.size);
                 }
