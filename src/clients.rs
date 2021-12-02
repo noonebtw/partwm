@@ -9,14 +9,13 @@ use crate::util::{Point, Size};
 mod client {
     use std::hash::{Hash, Hasher};
 
+    use crate::util::{Point, Size};
     use x11::xlib::Window;
-
-    use crate::backends::window_event::Point;
 
     #[derive(Clone, Debug)]
     pub struct Client {
         pub(crate) window: Window,
-        pub(crate) size: Point<i32>,
+        pub(crate) size: Size<i32>,
         pub(crate) position: Point<i32>,
         pub(crate) transient_for: Option<Window>,
         pub(crate) fullscreen: bool,
@@ -38,7 +37,7 @@ mod client {
         #[allow(dead_code)]
         pub fn new(
             window: Window,
-            size: Point<i32>,
+            size: Size<i32>,
             position: Point<i32>,
         ) -> Self {
             Self {
@@ -51,7 +50,7 @@ mod client {
 
         pub fn new_transient(
             window: Window,
-            size: Point<i32>,
+            size: Size<i32>,
             transient: Window,
         ) -> Self {
             Self {
@@ -165,7 +164,7 @@ pub struct ClientState {
     pub(self) virtual_screens: VirtualScreenStore,
 
     pub(self) gap: i32,
-    pub(self) screen_size: Point<i32>,
+    pub(self) screen_size: Size<i32>,
     pub(self) master_size: f32,
     border_size: i32,
 }
@@ -214,7 +213,7 @@ impl ClientState {
         }
     }
 
-    pub fn with_screen_size(self, screen_size: Point<i32>) -> Self {
+    pub fn with_screen_size(self, screen_size: Size<i32>) -> Self {
         Self {
             screen_size,
             ..self
@@ -248,9 +247,9 @@ impl ClientState {
             client.position = {
                 (
                     transient.position.x
-                        + (transient.size.x - client.size.x) / 2,
+                        + (transient.size.width - client.size.width) / 2,
                     transient.position.y
-                        + (transient.size.y - client.size.y) / 2,
+                        + (transient.size.height - client.size.height) / 2,
                 )
                     .into()
             };
