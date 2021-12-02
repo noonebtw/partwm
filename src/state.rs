@@ -468,8 +468,6 @@ where
                     window,
                     state,
                 }) => {
-                    info!("FullscreenEvent for window {}: {:?}", window, state);
-
                     if match state {
                         FullscreenState::On => {
                             self.clients.set_fullscreen(&window, true)
