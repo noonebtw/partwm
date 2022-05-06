@@ -1,6 +1,6 @@
 use log::{error, warn};
 use num_traits::Zero;
-use std::{ffi::CString, mem::MaybeUninit, rc::Rc};
+use std::{ffi::CString, rc::Rc};
 
 use thiserror::Error;
 
@@ -292,10 +292,15 @@ impl XLib {
 
                 (ev.atom == self.atoms.net_wm_window_type)
                     .then(|| {
-                        (self.get_atom_property(
-                            ev.window,
-                            self.atoms.net_wm_state,
-                        ) == Some(self.atoms.net_wm_state_fullscreen))
+                        (self
+                            .get_atom_property(
+                                ev.window,
+                                self.atoms.net_wm_state,
+                            )
+                            .map(|atom| {
+                                *atom == self.atoms.net_wm_state_fullscreen
+                            })
+                            == Some(true))
                         .then(|| {
                             XLibWindowEvent::FullscreenEvent(
                                 FullscreenEvent::new(
@@ -361,31 +366,31 @@ impl XLib {
         &self,
         window: xlib::Window,
         atom: xlib::Atom,
-    ) -> Option<xlib::Atom> {
+    ) -> Option<xpointer::XPointer<xlib::Atom>> {
         let mut di = 0;
         let mut dl0 = 0;
         let mut dl1 = 0;
         let mut da = 0;
 
-        let mut atom_out = MaybeUninit::<xlib::Atom>::zeroed();
+        let (atom_out, success) =
+            xpointer::XPointer::<xlib::Atom>::build_with_result(|ptr| unsafe {
+                xlib::XGetWindowProperty(
+                    self.dpy(),
+                    window,
+                    atom,
+                    0,
+                    std::mem::size_of::<xlib::Atom>() as i64,
+                    0,
+                    xlib::XA_ATOM,
+                    &mut da,
+                    &mut di,
+                    &mut dl0,
+                    &mut dl1,
+                    ptr as *mut _ as *mut _,
+                ) != 0
+            });
 
-        unsafe {
-            (xlib::XGetWindowProperty(
-                self.dpy(),
-                window,
-                atom,
-                0,
-                std::mem::size_of::<xlib::Atom>() as i64,
-                0,
-                xlib::XA_ATOM,
-                &mut da,
-                &mut di,
-                &mut dl0,
-                &mut dl1,
-                atom_out.as_mut_ptr() as *mut _,
-            ) != 0)
-                .then(|| atom_out.assume_init())
-        }
+        success.then(|| atom_out).flatten()
     }
 
     fn check_for_protocol(
@@ -1053,6 +1058,81 @@ unsafe extern "C" fn xlib_error_handler(
                 err_event.request_code, err_event.error_code
             );
             std::process::exit(1)
+        }
+    }
+}
+
+pub mod xpointer {
+    use std::{
+        ops::{Deref, DerefMut},
+        ptr::{null, NonNull},
+    };
+
+    use x11::xlib::XFree;
+
+    #[repr(C)]
+    pub struct XPointer<T>(NonNull<T>);
+
+    impl<T> XPointer<T> {
+        pub fn build_with<F>(cb: F) -> Option<Self>
+        where
+            F: FnOnce(&mut *const ()),
+        {
+            let mut ptr = null() as *const ();
+            cb(&mut ptr);
+            NonNull::new(ptr as *mut T).map(|ptr| Self(ptr))
+        }
+
+        pub fn build_with_result<F, R>(cb: F) -> (Option<Self>, R)
+        where
+            F: FnOnce(&mut *const ()) -> R,
+        {
+            let mut ptr = null() as *const ();
+            let result = cb(&mut ptr);
+            (NonNull::new(ptr as *mut T).map(|ptr| Self(ptr)), result)
+        }
+    }
+
+    impl<T> AsRef<T> for XPointer<T> {
+        fn as_ref(&self) -> &T {
+            &**self
+        }
+    }
+
+    impl<T> AsMut<T> for XPointer<T> {
+        fn as_mut(&mut self) -> &mut T {
+            &mut **self
+        }
+    }
+
+    impl<T> PartialEq for XPointer<T>
+    where
+        T: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl<T> Eq for XPointer<T> where T: Eq {}
+
+    impl<T> Deref for XPointer<T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            unsafe { self.0.as_ref() }
+        }
+    }
+
+    impl<T> DerefMut for XPointer<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe { self.0.as_mut() }
+        }
+    }
+
+    impl<T> Drop for XPointer<T> {
+        fn drop(&mut self) {
+            unsafe { XFree(self.0.as_ptr() as _) };
         }
     }
 }
