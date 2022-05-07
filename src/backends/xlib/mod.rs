@@ -662,8 +662,11 @@ impl XLib {
             self.connection.root(),
             window_attributes.event_mask,
         );
+
         xlib::XSetErrorHandler(Some(xlib_error_handler));
         xlib::XSync(self.dpy(), 0);
+
+        self.ewmh_atoms.set_supported_atoms(self.connection.clone());
     }
 
     //#[deprecated = "use `self.connection.dpy()` instead"]
