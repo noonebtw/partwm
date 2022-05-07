@@ -14,9 +14,14 @@ use crate::backends::{
     keycodes::KeyOrButton, xlib::keysym::mouse_button_to_xbutton,
 };
 
-use self::keysym::{
-    keysym_to_virtual_keycode, virtual_keycode_to_keysym, xev_to_mouse_button,
-    XKeySym,
+use self::{
+    connection::XLibConnection,
+    ewmh::EWMHAtoms,
+    keysym::{
+        keysym_to_virtual_keycode, virtual_keycode_to_keysym,
+        xev_to_mouse_button, XKeySym,
+    },
+    wmh::ICCCMAtoms,
 };
 
 use super::{
@@ -99,6 +104,92 @@ impl From<u8> for XlibError {
             xlib::BadValue => XlibError::BadValue,
             xlib::BadWindow => XlibError::BadWindow,
             any => XlibError::InvalidError(any),
+        }
+    }
+}
+
+pub mod wmh {
+    use std::{borrow::Borrow, ffi::CString, ops::Index, os::raw::c_long};
+
+    use strum::{EnumCount, EnumIter};
+    use x11::xlib::{Atom, XA_ATOM};
+
+    use super::{
+        connection::{PropMode, XLibConnection},
+        Display,
+    };
+
+    #[derive(Debug, PartialEq, Eq, EnumIter, EnumCount, Clone, Copy)]
+    pub enum ICCCMAtom {
+        WmName,
+        WmProtocols,
+        WmDeleteWindow,
+        WmActiveWindow,
+        WmTakeFocus,
+        WmState,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct ICCCMAtoms {
+        inner: Vec<Atom>,
+    }
+
+    impl Index<ICCCMAtom> for ICCCMAtoms {
+        type Output = Atom;
+
+        fn index(&self, index: ICCCMAtom) -> &Self::Output {
+            &self.inner[usize::from(index)]
+        }
+    }
+
+    impl ICCCMAtoms {
+        pub fn from_connection<C: Borrow<XLibConnection>>(
+            con: C,
+        ) -> Option<Self> {
+            ICCCMAtom::try_get_atoms(con.borrow().display())
+                .map(|atoms| Self { inner: atoms })
+        }
+    }
+
+    impl ICCCMAtom {
+        pub fn try_get_atoms(display: Display) -> Option<Vec<Atom>> {
+            use strum::IntoEnumIterator;
+            Self::iter()
+                .map(|atom| atom.try_into_x_atom(&display))
+                .collect::<Option<Vec<_>>>()
+        }
+
+        fn try_into_x_atom(self, display: &Display) -> Option<Atom> {
+            let name = CString::new::<&str>(self.into()).ok()?;
+            match unsafe {
+                x11::xlib::XInternAtom(
+                    display.get(),
+                    name.as_c_str().as_ptr(),
+                    0,
+                )
+            } {
+                0 => None,
+                atom => Some(atom),
+            }
+        }
+    }
+
+    impl From<ICCCMAtom> for usize {
+        fn from(atom: ICCCMAtom) -> Self {
+            atom as usize
+        }
+    }
+
+    impl From<ICCCMAtom> for &str {
+        fn from(atom: ICCCMAtom) -> Self {
+            match atom {
+                ICCCMAtom::WmName => "WM_NAME",
+                ICCCMAtom::WmProtocols => "WM_PROTOCOLS",
+                ICCCMAtom::WmDeleteWindow => "WM_DELETE_WINDOW",
+                ICCCMAtom::WmActiveWindow => "WM_ACTIVE_WINDOW",
+                ICCCMAtom::WmTakeFocus => "WM_TAKE_FOCUS",
+                ICCCMAtom::WmState => "WM_STATE",
+            }
         }
     }
 }
@@ -500,38 +591,26 @@ impl Display {
 }
 
 pub struct XLib {
-    display: Display,
-    root: Window,
-    screen: i32,
-    atoms: XLibAtoms,
+    connection: Rc<XLibConnection>,
+    //atoms: XLibAtoms,
+    icccm_atoms: ICCCMAtoms,
+    ewmh_atoms: EWMHAtoms,
     keybinds: Vec<KeyOrMouseBind>,
     active_border_color: Option<color::XftColor>,
     inactive_border_color: Option<color::XftColor>,
 }
 
-impl Drop for XLib {
-    fn drop(&mut self) {
-        self.close_dpy();
-    }
-}
-
 impl XLib {
     fn new() -> Self {
-        let (display, screen, root) = {
-            let display = Display::open().expect("failed to open x display");
-            let screen = unsafe { xlib::XDefaultScreen(display.get()) };
-            let root = unsafe { xlib::XRootWindow(display.get(), screen) };
-
-            (display, screen, root)
-        };
-
-        let atoms = XLibAtoms::init(display.clone());
+        let con =
+            Rc::new(XLibConnection::new().expect("failed to open x display"));
 
         Self {
-            display,
-            screen,
-            root,
-            atoms,
+            connection: con.clone(),
+            icccm_atoms: ICCCMAtoms::from_connection(con.clone())
+                .expect("atoms"),
+            ewmh_atoms: EWMHAtoms::from_connection(con.clone())
+                .expect("ewmh atoms"),
             keybinds: Vec::new(),
             active_border_color: None,
             inactive_border_color: None,
@@ -551,25 +630,24 @@ impl XLib {
             | xlib::ButtonPressMask;
 
         xlib::XChangeWindowAttributes(
-            self.dpy(),
-            self.root,
+            self.connection.dpy(),
+            self.connection.root(),
             xlib::CWEventMask,
             &mut window_attributes,
         );
 
-        xlib::XSelectInput(self.dpy(), self.root, window_attributes.event_mask);
+        xlib::XSelectInput(
+            self.dpy(),
+            self.connection.root(),
+            window_attributes.event_mask,
+        );
         xlib::XSetErrorHandler(Some(xlib_error_handler));
         xlib::XSync(self.dpy(), 0);
     }
 
+    #[deprecated = "use `self.connection.dpy()` instead"]
     fn dpy(&self) -> *mut xlib::Display {
-        self.display.get()
-    }
-
-    fn close_dpy(&self) {
-        unsafe {
-            xlib::XCloseDisplay(self.dpy());
-        }
+        self.connection.dpy()
     }
 
     fn next_xevent(&mut self) -> XEvent {
@@ -1119,7 +1197,7 @@ impl WindowServerBackend for XLib {
     }
 
     fn add_keybind(&mut self, keybind: super::window_event::KeyOrMouseBind) {
-        self.grab_key_or_button(&keybind, self.root);
+        self.grab_key_or_button(&keybind, self.connection.root());
         self.keybinds.push(keybind);
     }
 
@@ -1154,7 +1232,7 @@ impl WindowServerBackend for XLib {
 
             xlib::XChangeProperty(
                 self.dpy(),
-                self.root,
+                self.connection.root(),
                 self.atoms.wm_active_window,
                 xlib::XA_WINDOW,
                 32,
@@ -1171,7 +1249,7 @@ impl WindowServerBackend for XLib {
         unsafe {
             xlib::XSetInputFocus(
                 self.dpy(),
-                self.root,
+                self.connection.root(),
                 xlib::RevertToPointerRoot,
                 xlib::CurrentTime,
             );
@@ -1193,7 +1271,7 @@ impl WindowServerBackend for XLib {
 
             xlib::XDeleteProperty(
                 self.dpy(),
-                self.root,
+                self.connection.root(),
                 self.atoms.wm_active_window,
             );
         }
@@ -1274,7 +1352,11 @@ impl WindowServerBackend for XLib {
             let mut wa =
                 std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed();
 
-            xlib::XGetWindowAttributes(self.dpy(), self.root, wa.as_mut_ptr());
+            xlib::XGetWindowAttributes(
+                self.dpy(),
+                self.connection.root(),
+                wa.as_mut_ptr(),
+            );
 
             let wa = wa.assume_init();
 
@@ -1291,7 +1373,7 @@ impl WindowServerBackend for XLib {
         unsafe {
             xlib::XGrabPointer(
                 self.dpy(),
-                self.root,
+                self.connection.root(),
                 0,
                 (xlib::ButtonPressMask
                     | xlib::ButtonReleaseMask
@@ -1316,7 +1398,7 @@ impl WindowServerBackend for XLib {
             xlib::XWarpPointer(
                 self.dpy(),
                 0,
-                window.unwrap_or(self.root),
+                window.unwrap_or(self.connection.root()),
                 0,
                 0,
                 0,
@@ -1336,7 +1418,7 @@ impl WindowServerBackend for XLib {
         unsafe {
             xlib::XQueryTree(
                 self.dpy(),
-                self.root,
+                self.connection.root(),
                 &mut root,
                 &mut parent,
                 &mut children,
@@ -1357,8 +1439,8 @@ impl WindowServerBackend for XLib {
 
     fn set_active_window_border_color(&mut self, color_name: &str) {
         self.active_border_color = color::XftColor::new(
-            self.display.clone(),
-            self.screen,
+            self.connection.display(),
+            self.connection.screen(),
             color_name.to_owned(),
         )
         .ok();
@@ -1366,11 +1448,15 @@ impl WindowServerBackend for XLib {
 
     fn set_inactive_window_border_color(&mut self, color_name: &str) {
         self.inactive_border_color = color::XftColor::new(
-            self.display.clone(),
-            self.screen,
+            self.connection.display(),
+            self.connection.screen(),
             color_name.to_owned(),
         )
         .ok();
+    }
+
+    fn get_window_name(&self, window: Self::Window) -> Option<String> {
+        todo!()
     }
 }
 

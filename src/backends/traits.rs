@@ -31,6 +31,7 @@ pub trait WindowServerBackend {
 
     fn screen_size(&self) -> Size<i32>;
     fn get_window_size(&self, window: Self::Window) -> Option<Size<i32>>;
+    fn get_window_name(&self, window: Self::Window) -> Option<String>;
 
     fn grab_cursor(&self);
     fn ungrab_cursor(&self);
