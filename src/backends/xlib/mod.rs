@@ -1,6 +1,10 @@
 use log::{debug, error, warn};
 use num_traits::Zero;
+use std::{ffi::CString, mem::MaybeUninit, ptr::NonNull, rc::Rc};
 use std::{ffi::CString, rc::Rc};
+>>>>>>> variant B
+use std::{ffi::CString, mem::MaybeUninit, ptr::NonNull, rc::Rc};
+======= end
 
 use thiserror::Error;
 
@@ -32,7 +36,7 @@ pub mod keysym;
 pub type XLibWindowEvent = WindowEvent<xlib::Window>;
 
 #[derive(Clone)]
-pub struct Display(Rc<*mut x11::xlib::Display>);
+pub struct Display(Rc<NonNull<x11::xlib::Display>>);
 
 #[derive(Debug, Error)]
 pub enum XlibError {
@@ -108,7 +112,7 @@ pub mod ewmh {
     use super::Display;
 
     #[derive(Debug, PartialEq, Eq, EnumIter, EnumCount, Clone, Copy)]
-    pub enum EWMHAtom {
+    pub enum EWMHAtoms {
         NetSupported,
         NetClientList,
         NetNumberOfDesktops,
@@ -179,7 +183,7 @@ pub mod ewmh {
         NetWmActionClose,
     }
 
-    impl EWMHAtom {
+    impl EWMHAtoms {
         pub fn try_get_atoms(display: Display) -> Option<Vec<Atom>> {
             use strum::IntoEnumIterator;
             Self::iter()
@@ -202,115 +206,139 @@ pub mod ewmh {
         }
     }
 
-    impl From<EWMHAtom> for u8 {
-        fn from(atom: EWMHAtom) -> Self {
+    impl From<EWMHAtoms> for u8 {
+        fn from(atom: EWMHAtoms) -> Self {
             atom as u8
         }
     }
 
-    impl From<EWMHAtom> for &str {
-        fn from(atom: EWMHAtom) -> Self {
+    impl From<EWMHAtoms> for &str {
+        fn from(atom: EWMHAtoms) -> Self {
             match atom {
-                EWMHAtom::NetSupported => "_NET_SUPPORTED",
-                EWMHAtom::NetClientList => "_NET_CLIENT_LIST",
-                EWMHAtom::NetNumberOfDesktops => "_NET_NUMBER_OF_DESKTOPS",
-                EWMHAtom::NetDesktopGeometry => "_NET_DESKTOP_GEOMETRY",
-                EWMHAtom::NetDesktopViewport => "_NET_DESKTOP_VIEWPORT",
-                EWMHAtom::NetCurrentDesktop => "_NET_CURRENT_DESKTOP",
-                EWMHAtom::NetDesktopNames => "_NET_DESKTOP_NAMES",
-                EWMHAtom::NetActiveWindow => "_NET_ACTIVE_WINDOW",
-                EWMHAtom::NetWorkarea => "_NET_WORKAREA",
-                EWMHAtom::NetSupportingWmCheck => "_NET_SUPPORTING_WM_CHECK",
-                EWMHAtom::NetVirtualRoots => "_NET_VIRTUAL_ROOTS",
-                EWMHAtom::NetDesktopLayout => "_NET_DESKTOP_LAYOUT",
-                EWMHAtom::NetShowingDesktop => "_NET_SHOWING_DESKTOP",
-                EWMHAtom::NetCloseWindow => "_NET_CLOSE_WINDOW",
-                EWMHAtom::NetMoveresizeWindow => "_NET_MOVERESIZE_WINDOW",
-                EWMHAtom::NetWmMoveresize => "_NET_WM_MOVERESIZE",
-                EWMHAtom::NetRestackWindow => "_NET_RESTACK_WINDOW",
-                EWMHAtom::NetRequestFrameExtents => {
+                EWMHAtoms::NetSupported => "_NET_SUPPORTED",
+                EWMHAtoms::NetClientList => "_NET_CLIENT_LIST",
+                EWMHAtoms::NetNumberOfDesktops => "_NET_NUMBER_OF_DESKTOPS",
+                EWMHAtoms::NetDesktopGeometry => "_NET_DESKTOP_GEOMETRY",
+                EWMHAtoms::NetDesktopViewport => "_NET_DESKTOP_VIEWPORT",
+                EWMHAtoms::NetCurrentDesktop => "_NET_CURRENT_DESKTOP",
+                EWMHAtoms::NetDesktopNames => "_NET_DESKTOP_NAMES",
+                EWMHAtoms::NetActiveWindow => "_NET_ACTIVE_WINDOW",
+                EWMHAtoms::NetWorkarea => "_NET_WORKAREA",
+                EWMHAtoms::NetSupportingWmCheck => "_NET_SUPPORTING_WM_CHECK",
+                EWMHAtoms::NetVirtualRoots => "_NET_VIRTUAL_ROOTS",
+                EWMHAtoms::NetDesktopLayout => "_NET_DESKTOP_LAYOUT",
+                EWMHAtoms::NetShowingDesktop => "_NET_SHOWING_DESKTOP",
+                EWMHAtoms::NetCloseWindow => "_NET_CLOSE_WINDOW",
+                EWMHAtoms::NetMoveresizeWindow => "_NET_MOVERESIZE_WINDOW",
+                EWMHAtoms::NetWmMoveresize => "_NET_WM_MOVERESIZE",
+                EWMHAtoms::NetRestackWindow => "_NET_RESTACK_WINDOW",
+                EWMHAtoms::NetRequestFrameExtents => {
                     "_NET_REQUEST_FRAME_EXTENTS"
                 }
-                EWMHAtom::NetWmName => "_NET_WM_NAME",
-                EWMHAtom::NetWmVisibleName => "_NET_WM_VISIBLE_NAME",
-                EWMHAtom::NetWmIconName => "_NET_WM_ICON_NAME",
-                EWMHAtom::NetWmVisibleIconName => "_NET_WM_VISIBLE_ICON_NAME",
-                EWMHAtom::NetWmDesktop => "_NET_WM_DESKTOP",
-                EWMHAtom::NetWmWindowType => "_NET_WM_WINDOW_TYPE",
-                EWMHAtom::NetWmState => "_NET_WM_STATE",
-                EWMHAtom::NetWmAllowedActions => "_NET_WM_ALLOWED_ACTIONS",
-                EWMHAtom::NetWmStrut => "_NET_WM_STRUT",
-                EWMHAtom::NetWmStrutPartial => "_NET_WM_STRUT_PARTIAL",
-                EWMHAtom::NetWmIconGeometry => "_NET_WM_ICON_GEOMETRY",
-                EWMHAtom::NetWmIcon => "_NET_WM_ICON",
-                EWMHAtom::NetWmPid => "_NET_WM_PID",
-                EWMHAtom::NetWmHandledIcons => "_NET_WM_HANDLED_ICONS",
-                EWMHAtom::NetWmUserTime => "_NET_WM_USER_TIME",
-                EWMHAtom::NetFrameExtents => "_NET_FRAME_EXTENTS",
-                EWMHAtom::NetWmPing => "_NET_WM_PING",
-                EWMHAtom::NetWmSyncRequest => "_NET_WM_SYNC_REQUEST",
-                EWMHAtom::NetWmWindowTypeDesktop => {
+                EWMHAtoms::NetWmName => "_NET_WM_NAME",
+                EWMHAtoms::NetWmVisibleName => "_NET_WM_VISIBLE_NAME",
+                EWMHAtoms::NetWmIconName => "_NET_WM_ICON_NAME",
+                EWMHAtoms::NetWmVisibleIconName => "_NET_WM_VISIBLE_ICON_NAME",
+                EWMHAtoms::NetWmDesktop => "_NET_WM_DESKTOP",
+                EWMHAtoms::NetWmWindowType => "_NET_WM_WINDOW_TYPE",
+                EWMHAtoms::NetWmState => "_NET_WM_STATE",
+                EWMHAtoms::NetWmAllowedActions => "_NET_WM_ALLOWED_ACTIONS",
+                EWMHAtoms::NetWmStrut => "_NET_WM_STRUT",
+                EWMHAtoms::NetWmStrutPartial => "_NET_WM_STRUT_PARTIAL",
+                EWMHAtoms::NetWmIconGeometry => "_NET_WM_ICON_GEOMETRY",
+                EWMHAtoms::NetWmIcon => "_NET_WM_ICON",
+                EWMHAtoms::NetWmPid => "_NET_WM_PID",
+                EWMHAtoms::NetWmHandledIcons => "_NET_WM_HANDLED_ICONS",
+                EWMHAtoms::NetWmUserTime => "_NET_WM_USER_TIME",
+                EWMHAtoms::NetFrameExtents => "_NET_FRAME_EXTENTS",
+                EWMHAtoms::NetWmPing => "_NET_WM_PING",
+                EWMHAtoms::NetWmSyncRequest => "_NET_WM_SYNC_REQUEST",
+                EWMHAtoms::NetWmWindowTypeDesktop => {
                     "_NET_WM_WINDOW_TYPE_DESKTOP"
                 }
-                EWMHAtom::NetWmWindowTypeDock => "_NET_WM_WINDOW_TYPE_DOCK",
-                EWMHAtom::NetWmWindowTypeToolbar => {
+                EWMHAtoms::NetWmWindowTypeDock => "_NET_WM_WINDOW_TYPE_DOCK",
+                EWMHAtoms::NetWmWindowTypeToolbar => {
                     "_NET_WM_WINDOW_TYPE_TOOLBAR"
                 }
-                EWMHAtom::NetWmWindowTypeMenu => "_NET_WM_WINDOW_TYPE_MENU",
-                EWMHAtom::NetWmWindowTypeUtility => {
+                EWMHAtoms::NetWmWindowTypeMenu => "_NET_WM_WINDOW_TYPE_MENU",
+                EWMHAtoms::NetWmWindowTypeUtility => {
                     "_NET_WM_WINDOW_TYPE_UTILITY"
                 }
-                EWMHAtom::NetWmWindowTypeSplash => "_NET_WM_WINDOW_TYPE_SPLASH",
-                EWMHAtom::NetWmWindowTypeDialog => "_NET_WM_WINDOW_TYPE_DIALOG",
-                EWMHAtom::NetWmWindowTypeNormal => "_NET_WM_WINDOW_TYPE_NORMAL",
-                EWMHAtom::NetWmStateModal => "_NET_WM_STATE_MODAL",
-                EWMHAtom::NetWmStateSticky => "_NET_WM_STATE_STICKY",
-                EWMHAtom::NetWmStateMaximizedVert => {
+                EWMHAtoms::NetWmWindowTypeSplash => {
+                    "_NET_WM_WINDOW_TYPE_SPLASH"
+                }
+                EWMHAtoms::NetWmWindowTypeDialog => {
+                    "_NET_WM_WINDOW_TYPE_DIALOG"
+                }
+                EWMHAtoms::NetWmWindowTypeNormal => {
+                    "_NET_WM_WINDOW_TYPE_NORMAL"
+                }
+                EWMHAtoms::NetWmStateModal => "_NET_WM_STATE_MODAL",
+                EWMHAtoms::NetWmStateSticky => "_NET_WM_STATE_STICKY",
+                EWMHAtoms::NetWmStateMaximizedVert => {
                     "_NET_WM_STATE_MAXIMIZED_VERT"
                 }
-                EWMHAtom::NetWmStateMaximizedHorz => {
+                EWMHAtoms::NetWmStateMaximizedHorz => {
                     "_NET_WM_STATE_MAXIMIZED_HORZ"
                 }
-                EWMHAtom::NetWmStateShaded => "_NET_WM_STATE_SHADED",
-                EWMHAtom::NetWmStateSkipTaskbar => "_NET_WM_STATE_SKIP_TASKBAR",
-                EWMHAtom::NetWmStateSkipPager => "_NET_WM_STATE_SKIP_PAGER",
-                EWMHAtom::NetWmStateHidden => "_NET_WM_STATE_HIDDEN",
-                EWMHAtom::NetWmStateFullscreen => "_NET_WM_STATE_FULLSCREEN",
-                EWMHAtom::NetWmStateAbove => "_NET_WM_STATE_ABOVE",
-                EWMHAtom::NetWmStateBelow => "_NET_WM_STATE_BELOW",
-                EWMHAtom::NetWmStateDemandsAttention => {
+                EWMHAtoms::NetWmStateShaded => "_NET_WM_STATE_SHADED",
+                EWMHAtoms::NetWmStateSkipTaskbar => {
+                    "_NET_WM_STATE_SKIP_TASKBAR"
+                }
+                EWMHAtoms::NetWmStateSkipPager => "_NET_WM_STATE_SKIP_PAGER",
+                EWMHAtoms::NetWmStateHidden => "_NET_WM_STATE_HIDDEN",
+                EWMHAtoms::NetWmStateFullscreen => "_NET_WM_STATE_FULLSCREEN",
+                EWMHAtoms::NetWmStateAbove => "_NET_WM_STATE_ABOVE",
+                EWMHAtoms::NetWmStateBelow => "_NET_WM_STATE_BELOW",
+                EWMHAtoms::NetWmStateDemandsAttention => {
                     "_NET_WM_STATE_DEMANDS_ATTENTION"
                 }
-                EWMHAtom::NetWmActionMove => "_NET_WM_ACTION_MOVE",
-                EWMHAtom::NetWmActionResize => "_NET_WM_ACTION_RESIZE",
-                EWMHAtom::NetWmActionMinimize => "_NET_WM_ACTION_MINIMIZE",
-                EWMHAtom::NetWmActionShade => "_NET_WM_ACTION_SHADE",
-                EWMHAtom::NetWmActionStick => "_NET_WM_ACTION_STICK",
-                EWMHAtom::NetWmActionMaximizeHorz => {
+                EWMHAtoms::NetWmActionMove => "_NET_WM_ACTION_MOVE",
+                EWMHAtoms::NetWmActionResize => "_NET_WM_ACTION_RESIZE",
+                EWMHAtoms::NetWmActionMinimize => "_NET_WM_ACTION_MINIMIZE",
+                EWMHAtoms::NetWmActionShade => "_NET_WM_ACTION_SHADE",
+                EWMHAtoms::NetWmActionStick => "_NET_WM_ACTION_STICK",
+                EWMHAtoms::NetWmActionMaximizeHorz => {
                     "_NET_WM_ACTION_MAXIMIZE_HORZ"
                 }
-                EWMHAtom::NetWmActionMaximizeVert => {
+                EWMHAtoms::NetWmActionMaximizeVert => {
                     "_NET_WM_ACTION_MAXIMIZE_VERT"
                 }
-                EWMHAtom::NetWmActionFullscreen => "_NET_WM_ACTION_FULLSCREEN",
-                EWMHAtom::NetWmActionChangeDesktop => {
+                EWMHAtoms::NetWmActionFullscreen => "_NET_WM_ACTION_FULLSCREEN",
+                EWMHAtoms::NetWmActionChangeDesktop => {
                     "_NET_WM_ACTION_CHANGE_DESKTOP"
                 }
-                EWMHAtom::NetWmActionClose => "_NET_WM_ACTION_CLOSE",
+                EWMHAtoms::NetWmActionClose => "_NET_WM_ACTION_CLOSE",
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn get_atoms() {
+            let display = Display::open().unwrap();
+            let atoms = EWMHAtoms::try_get_atoms(display).expect("atoms");
+            println!("{:?}", atoms);
         }
     }
 }
 
 impl Display {
-    pub fn new(display: *mut x11::xlib::Display) -> Self {
-        Self {
-            0: Rc::new(display),
-        }
+    pub fn new(display: *mut x11::xlib::Display) -> Option<Self> {
+        NonNull::new(display).map(|ptr| Self(Rc::new(ptr)))
     }
 
+    // TODO: error communication
+    pub fn open() -> Option<Self> {
+        Self::new(unsafe { xlib::XOpenDisplay(std::ptr::null()) })
+    }
+
+    /// this should definitely be unsafe lmao
     pub fn get(&self) -> *mut x11::xlib::Display {
-        *self.0
+        self.0.as_ptr()
     }
 }
 
@@ -333,12 +361,9 @@ impl Drop for XLib {
 impl XLib {
     fn new() -> Self {
         let (display, screen, root) = {
-            let display = unsafe { xlib::XOpenDisplay(std::ptr::null()) };
-            assert_ne!(display, std::ptr::null_mut());
-            let screen = unsafe { xlib::XDefaultScreen(display) };
-            let root = unsafe { xlib::XRootWindow(display, screen) };
-
-            let display = Display::new(display);
+            let display = Display::open().expect("failed to open x display");
+            let screen = unsafe { xlib::XDefaultScreen(display.get()) };
+            let root = unsafe { xlib::XRootWindow(display.get(), screen) };
 
             (display, screen, root)
         };
