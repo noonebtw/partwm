@@ -22,6 +22,7 @@ use self::{
 
 use super::{
     keycodes::VirtualKeyCode,
+    structs::WindowType,
     window_event::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, FullscreenEvent,
         FullscreenState, KeyEvent, KeyOrMouseBind, KeyState, MapEvent,
@@ -289,6 +290,14 @@ pub mod ewmh {
         ) -> Option<Self> {
             EWMHAtom::try_get_atoms(con.borrow().display())
                 .map(|atoms| Self { inner: atoms })
+        }
+
+        pub fn reverse_lookup(&self, atom: Atom) -> Option<EWMHAtom> {
+            self.inner
+                .iter()
+                .position(|a| *a == atom)
+                .map(|position| EWMHAtom::from_repr(position))
+                .flatten()
         }
 
         pub fn set_supported_atoms<C: Borrow<XLibConnection>>(&self, con: C) {
@@ -1504,6 +1513,44 @@ impl WindowServerBackend for XLib {
                 self.connection
                     .get_text_property(window, self.atoms[ICCCMAtom::WmName])
             })
+    }
+
+    fn get_window_type(
+        &self,
+        window: Self::Window,
+    ) -> super::structs::WindowType {
+        match self
+            .get_atom_property(
+                window,
+                self.ewmh_atoms[EWMHAtom::NetWmWindowType],
+            )
+            .and_then(|atom| self.ewmh_atoms.reverse_lookup(*atom))
+            .and_then(|atom| WindowType::try_from(atom).ok())
+        {
+            Some(window_type) => window_type,
+            None => match self.get_parent_window(window) {
+                Some(_) => WindowType::Dialog,
+                None => WindowType::Normal,
+            },
+        }
+    }
+}
+
+impl TryFrom<EWMHAtom> for WindowType {
+    type Error = ();
+
+    fn try_from(value: EWMHAtom) -> Result<Self, Self::Error> {
+        match value {
+            EWMHAtom::NetWmWindowTypeDesktop => Ok(Self::Desktop),
+            EWMHAtom::NetWmWindowTypeDock => Ok(Self::Dock),
+            EWMHAtom::NetWmWindowTypeUtility => Ok(Self::Utility),
+            EWMHAtom::NetWmWindowTypeMenu => Ok(Self::Menu),
+            EWMHAtom::NetWmWindowTypeToolbar => Ok(Self::Toolbar),
+            EWMHAtom::NetWmWindowTypeSplash => Ok(Self::Splash),
+            EWMHAtom::NetWmWindowTypeDialog => Ok(Self::Dialog),
+            EWMHAtom::NetWmWindowTypeNormal => Ok(Self::Normal),
+            _ => Err(()),
+        }
     }
 }
 

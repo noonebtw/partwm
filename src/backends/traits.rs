@@ -1,4 +1,7 @@
-use super::window_event::{self, KeyOrMouseBind};
+use super::{
+    structs::WindowType,
+    window_event::{self, KeyOrMouseBind},
+};
 use crate::util::{Point, Size};
 
 pub trait WindowServerBackend {
@@ -32,6 +35,7 @@ pub trait WindowServerBackend {
     fn screen_size(&self) -> Size<i32>;
     fn get_window_size(&self, window: Self::Window) -> Option<Size<i32>>;
     fn get_window_name(&self, window: Self::Window) -> Option<String>;
+    fn get_window_type(&self, window: Self::Window) -> WindowType;
 
     fn grab_cursor(&self);
     fn ungrab_cursor(&self);
