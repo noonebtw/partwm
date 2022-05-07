@@ -1,10 +1,10 @@
-use log::{error, warn};
+use log::{debug, error, warn};
 use num_traits::Zero;
 use std::{ffi::CString, rc::Rc};
 
 use thiserror::Error;
 
-use x11::xlib::{self, Atom, Window, XEvent, XInternAtom, XKeyEvent};
+use x11::xlib::{self, Atom, Success, Window, XEvent, XInternAtom, XKeyEvent};
 
 use crate::backends::{
     keycodes::KeyOrButton, xlib::keysym::mouse_button_to_xbutton,
@@ -290,9 +290,9 @@ impl XLib {
             xlib::PropertyNotify => {
                 let ev = unsafe { &event.property };
 
-                (ev.atom == self.atoms.net_wm_window_type)
-                    .then(|| {
-                        (self
+                match ev.atom {
+                    atom if atom == self.atoms.net_wm_window_type => {
+                        if self
                             .get_atom_property(
                                 ev.window,
                                 self.atoms.net_wm_state,
@@ -300,44 +300,52 @@ impl XLib {
                             .map(|atom| {
                                 *atom == self.atoms.net_wm_state_fullscreen
                             })
-                            == Some(true))
-                        .then(|| {
-                            XLibWindowEvent::FullscreenEvent(
+                            .unwrap_or(false)
+                        {
+                            debug!("fullscreen event");
+                            Some(XLibWindowEvent::FullscreenEvent(
                                 FullscreenEvent::new(
                                     ev.window,
                                     FullscreenState::On,
                                 ),
-                            )
-                        })
-                    })
-                    .flatten()
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
             }
             xlib::ClientMessage => {
                 let ev = unsafe { &event.client_message };
 
-                (ev.message_type == self.atoms.net_wm_state)
-                    .then(|| {
+                match ev.message_type {
+                    message_type if message_type == self.atoms.net_wm_state => {
                         let data = ev.data.as_longs();
-                        (data[1] as u64 == self.atoms.net_wm_state_fullscreen
+                        if data[1] as u64 == self.atoms.net_wm_state_fullscreen
                             || data[2] as u64
-                                == self.atoms.net_wm_state_fullscreen)
-                            .then(|| {
-                                XLibWindowEvent::FullscreenEvent(
-                                    FullscreenEvent::new(
-                                        ev.window,
-                                        match data[0] /* as u64 */ {
-                                            0 => FullscreenState::Off,
-                                            1 => FullscreenState::On,
-                                            2 => FullscreenState::Toggle,
-                                            _ => {
-                                                unreachable!()
-                                            }
-                                        },
-                                    ),
-                                )
-                            })
-                    })
-                    .flatten()
+                                == self.atoms.net_wm_state_fullscreen
+                        {
+                            debug!("fullscreen event");
+                            Some(XLibWindowEvent::FullscreenEvent(
+                                FullscreenEvent::new(
+                                    ev.window,
+                                    match data[0] /* as u64 */ {
+                                        0 => FullscreenState::Off,
+                                        1 => FullscreenState::On,
+                                        2 => FullscreenState::Toggle,
+                                        _ => {
+                                            unreachable!()
+                                        }
+                                    },
+                                ),
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         }
@@ -387,8 +395,10 @@ impl XLib {
                     &mut dl0,
                     &mut dl1,
                     ptr as *mut _ as *mut _,
-                ) != 0
+                ) == Success.into()
             });
+
+        debug!("get_atom_property: {} {:?}", success, atom_out);
 
         success.then(|| atom_out).flatten()
     }
@@ -1071,6 +1081,7 @@ pub mod xpointer {
     use x11::xlib::XFree;
 
     #[repr(C)]
+    #[derive(Debug)]
     pub struct XPointer<T>(NonNull<T>);
 
     impl<T> XPointer<T> {

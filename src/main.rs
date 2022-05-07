@@ -31,7 +31,7 @@ fn init_logger() {
             Root::builder()
                 .appender("stdout")
                 //.appender("logfile")
-                .build(log::LevelFilter::Info),
+                .build(log::LevelFilter::Debug),
         )
         .unwrap();
 
