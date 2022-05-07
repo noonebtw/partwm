@@ -1,5 +1,6 @@
 use log::{debug, error, warn};
 use num_traits::Zero;
+<<<<<<< HEAD
 use std::{ffi::CString, mem::MaybeUninit, ptr::NonNull, rc::Rc};
 use std::{ffi::CString, rc::Rc};
 >>>>>>> variant B
@@ -9,6 +10,13 @@ use std::{ffi::CString, mem::MaybeUninit, ptr::NonNull, rc::Rc};
 use thiserror::Error;
 
 use x11::xlib::{self, Atom, Success, Window, XEvent, XInternAtom, XKeyEvent};
+=======
+use std::{mem::MaybeUninit, ptr::NonNull, rc::Rc};
+
+use thiserror::Error;
+
+use x11::xlib::{self, Atom, XEvent, XKeyEvent};
+>>>>>>> ab99fdd (refactored atoms)
 
 use crate::backends::{
     keycodes::KeyOrButton, xlib::keysym::mouse_button_to_xbutton,
@@ -16,12 +24,12 @@ use crate::backends::{
 
 use self::{
     connection::XLibConnection,
-    ewmh::EWMHAtoms,
+    ewmh::{EWMHAtom, EWMHAtoms},
     keysym::{
         keysym_to_virtual_keycode, virtual_keycode_to_keysym,
         xev_to_mouse_button, XKeySym,
     },
-    wmh::ICCCMAtoms,
+    wmh::{ICCCMAtom, ICCCMAtoms},
 };
 
 use super::{
@@ -109,15 +117,12 @@ impl From<u8> for XlibError {
 }
 
 pub mod wmh {
-    use std::{borrow::Borrow, ffi::CString, ops::Index, os::raw::c_long};
+    use std::{borrow::Borrow, ffi::CString, ops::Index};
 
     use strum::{EnumCount, EnumIter};
-    use x11::xlib::{Atom, XA_ATOM};
+    use x11::xlib::Atom;
 
-    use super::{
-        connection::{PropMode, XLibConnection},
-        Display,
-    };
+    use super::{connection::XLibConnection, Display};
 
     #[derive(Debug, PartialEq, Eq, EnumIter, EnumCount, Clone, Copy)]
     pub enum ICCCMAtom {
@@ -310,7 +315,7 @@ pub mod ewmh {
             ]
             .to_vec();
 
-            con.borrow().change_property_long(
+            con.borrow().change_root_property_long(
                 self[EWMHAtom::NetSupported],
                 XA_ATOM,
                 PropMode::Replace,
@@ -464,7 +469,10 @@ pub mod ewmh {
 }
 
 pub mod connection {
-    use std::os::raw::c_long;
+    use std::{
+        ffi::CString,
+        os::raw::{c_char, c_long},
+    };
 
     use x11::xlib::{self, Atom, Window};
 
@@ -530,7 +538,33 @@ pub mod connection {
             self.screen
         }
 
-        pub fn change_property_byte<T: AsRef<[u8]>>(
+        pub fn get_text_property(
+            &self,
+            window: Window,
+            atom: Atom,
+        ) -> Option<String> {
+            unsafe {
+                let mut text_prop =
+                    std::mem::MaybeUninit::<xlib::XTextProperty>::zeroed()
+                        .assume_init();
+
+                if xlib::XGetTextProperty(
+                    self.dpy(),
+                    window,
+                    &mut text_prop,
+                    atom,
+                ) == 0
+                {
+                    return None;
+                }
+
+                CString::from_raw(text_prop.value.cast::<c_char>())
+                    .into_string()
+                    .ok()
+            }
+        }
+
+        pub fn change_root_property_byte<T: AsRef<[u8]>>(
             &self,
             atom: Atom,
             atom_type: Atom,
@@ -551,7 +585,7 @@ pub mod connection {
             }
         }
 
-        pub fn change_property_long<T: AsRef<[c_long]>>(
+        pub fn change_root_property_long<T: AsRef<[c_long]>>(
             &self,
             atom: Atom,
             atom_type: Atom,
@@ -593,7 +627,7 @@ impl Display {
 pub struct XLib {
     connection: Rc<XLibConnection>,
     //atoms: XLibAtoms,
-    icccm_atoms: ICCCMAtoms,
+    atoms: ICCCMAtoms,
     ewmh_atoms: EWMHAtoms,
     keybinds: Vec<KeyOrMouseBind>,
     active_border_color: Option<color::XftColor>,
@@ -607,8 +641,7 @@ impl XLib {
 
         Self {
             connection: con.clone(),
-            icccm_atoms: ICCCMAtoms::from_connection(con.clone())
-                .expect("atoms"),
+            atoms: ICCCMAtoms::from_connection(con.clone()).expect("atoms"),
             ewmh_atoms: EWMHAtoms::from_connection(con.clone())
                 .expect("ewmh atoms"),
             keybinds: Vec::new(),
@@ -645,7 +678,7 @@ impl XLib {
         xlib::XSync(self.dpy(), 0);
     }
 
-    #[deprecated = "use `self.connection.dpy()` instead"]
+    //#[deprecated = "use `self.connection.dpy()` instead"]
     fn dpy(&self) -> *mut xlib::Display {
         self.connection.dpy()
     }
@@ -754,14 +787,14 @@ impl XLib {
                 let ev = unsafe { &event.property };
 
                 match ev.atom {
-                    atom if atom == self.atoms.net_wm_window_type => {
+                    atom if atom == self.ewmh_atoms[EWMHAtom::NetWmWindowType] => {
                         if self
                             .get_atom_property(
                                 ev.window,
-                                self.atoms.net_wm_state,
+                                ewmh_atoms[EWMHAtom::NetWmState],
                             )
                             .map(|atom| {
-                                *atom == self.atoms.net_wm_state_fullscreen
+                                *atom == self.ewmh_atoms[EWMHAtom::NetWmStateFullscreen]
                             })
                             .unwrap_or(false)
                         {
@@ -783,11 +816,11 @@ impl XLib {
                 let ev = unsafe { &event.client_message };
 
                 match ev.message_type {
-                    message_type if message_type == self.atoms.net_wm_state => {
+                    message_type if message_type == self.ewmh_atoms[EWMHAtom::NetWmState] => {
                         let data = ev.data.as_longs();
-                        if data[1] as u64 == self.atoms.net_wm_state_fullscreen
+                        if data[1] as u64 == self.ewmh_atoms[EWMHAtom::NetWmStateFullScreen]
                             || data[2] as u64
-                                == self.atoms.net_wm_state_fullscreen
+                                == self.ewmh_atoms[EWMHAtom::NetWmStateFullscreen]
                         {
                             debug!("fullscreen event");
                             Some(XLibWindowEvent::FullscreenEvent(
@@ -906,7 +939,7 @@ impl XLib {
                     send_event: 0,
                     window,
                     format: 32,
-                    message_type: self.atoms.wm_protocols,
+                    message_type: self.atoms[ICCCMAtom::WmProtocols],
                     data,
                 },
             };
@@ -1233,7 +1266,7 @@ impl WindowServerBackend for XLib {
             xlib::XChangeProperty(
                 self.dpy(),
                 self.connection.root(),
-                self.atoms.wm_active_window,
+                self.atoms[ICCCMAtom::WmActiveWindow],
                 xlib::XA_WINDOW,
                 32,
                 xlib::PropModeReplace,
@@ -1242,7 +1275,7 @@ impl WindowServerBackend for XLib {
             );
         }
 
-        self.send_protocol(window, self.atoms.wm_take_focus);
+        self.send_protocol(window, self.atoms[ICCCMAtom::WmTakeFocus]);
     }
 
     fn unfocus_window(&self, window: Self::Window) {
@@ -1272,7 +1305,7 @@ impl WindowServerBackend for XLib {
             xlib::XDeleteProperty(
                 self.dpy(),
                 self.connection.root(),
-                self.atoms.wm_active_window,
+                self.atoms[ICCCMAtom::WmActiveWindow],
             );
         }
     }
@@ -1289,7 +1322,7 @@ impl WindowServerBackend for XLib {
     }
 
     fn kill_window(&self, window: Self::Window) {
-        if !self.send_protocol(window, self.atoms.wm_delete_window) {
+        if !self.send_protocol(window, self.atoms[ICCCMAtom::WmDeleteWindow]) {
             unsafe {
                 xlib::XKillClient(self.dpy(), window);
             }
@@ -1456,64 +1489,12 @@ impl WindowServerBackend for XLib {
     }
 
     fn get_window_name(&self, window: Self::Window) -> Option<String> {
-        todo!()
-    }
-}
-
-#[allow(dead_code)]
-struct XLibAtoms {
-    wm_protocols: Atom,
-    wm_delete_window: Atom,
-    wm_active_window: Atom,
-    wm_take_focus: Atom,
-    net_supported: Atom,
-    net_active_window: Atom,
-    net_client_list: Atom,
-    net_wm_name: Atom,
-    net_wm_state: Atom,
-    net_wm_state_fullscreen: Atom,
-    net_wm_window_type: Atom,
-    net_wm_window_type_dialog: Atom,
-}
-
-impl XLibAtoms {
-    fn init(display: Display) -> Self {
-        Self {
-            wm_protocols: Self::get_atom(&display, "WM_PROTOCOLS").unwrap(),
-            wm_delete_window: Self::get_atom(&display, "WM_DELETE_WINDOW")
-                .unwrap(),
-            wm_active_window: Self::get_atom(&display, "WM_ACTIVE_WINDOW")
-                .unwrap(),
-            wm_take_focus: Self::get_atom(&display, "WM_TAKE_FOCUS").unwrap(),
-            net_supported: Self::get_atom(&display, "_NET_SUPPORTED").unwrap(),
-            net_active_window: Self::get_atom(&display, "_NET_ACTIVE_WINDOW")
-                .unwrap(),
-            net_client_list: Self::get_atom(&display, "_NET_CLIENT_LIST")
-                .unwrap(),
-            net_wm_name: Self::get_atom(&display, "_NET_WM_NAME").unwrap(),
-            net_wm_state: Self::get_atom(&display, "_NET_WM_STATE").unwrap(),
-            net_wm_state_fullscreen: Self::get_atom(
-                &display,
-                "_NET_WM_STATE_FULLSCREEN",
-            )
-            .unwrap(),
-            net_wm_window_type: Self::get_atom(&display, "_NET_WM_WINDOW_TYPE")
-                .unwrap(),
-            net_wm_window_type_dialog: Self::get_atom(
-                &display,
-                "_NET_WM_WINDOW_TYPE_DIALOG",
-            )
-            .unwrap(),
-        }
-    }
-
-    fn get_atom(display: &Display, atom: &str) -> Option<Atom> {
-        let name = CString::new(atom).ok()?;
-        match unsafe { XInternAtom(display.get(), name.as_c_str().as_ptr(), 0) }
-        {
-            0 => None,
-            atom => Some(atom),
-        }
+        self.connection
+            .get_text_property(window, self.ewmh_atoms[EWMHAtom::NetWmName])
+            .or_else(|| {
+                self.connection
+                    .get_text_property(window, self.atoms[ICCCMAtom::WmName])
+            })
     }
 }
 
