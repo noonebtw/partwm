@@ -4,6 +4,7 @@ use log::{error, info};
 
 use x11::xlib::{self, Window};
 
+use crate::backends::structs::WindowType;
 use crate::backends::window_event::{
     FullscreenEvent, FullscreenState, WindowNameEvent,
 };
@@ -748,19 +749,16 @@ where
     }
 
     fn new_client(&mut self, window: Window) {
-        info!("new client: {:?}", window);
-        let client = if let Some(transient_window) =
-            self.backend.get_parent_window(window)
-        {
-            Client::new_transient(
-                window,
-                self.backend
-                    .get_window_size(window)
-                    .unwrap_or((100, 100).into()),
-                transient_window,
-            )
-        } else {
-            Client::new_default(window)
+        let client = match self.backend.get_window_type(window) {
+            WindowType::Normal => Client::new_default(window),
+            window_type @ _ => Client::new_default(window)
+                .with_window_type(window_type)
+                .with_size(
+                    self.backend
+                        .get_window_size(window)
+                        .unwrap_or((100, 100).into()),
+                )
+                .with_parent_window(self.backend.get_parent_window(window)),
         };
 
         self.backend.configure_window(
@@ -769,6 +767,8 @@ where
             None,
             Some(self.clients.get_border()),
         );
+
+        info!("new client: {:#?}", client);
 
         self.clients.insert(client).unwrap();
         self.arrange_clients();

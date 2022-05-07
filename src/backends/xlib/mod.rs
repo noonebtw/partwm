@@ -1,6 +1,6 @@
 use log::{debug, error, warn};
 use num_traits::Zero;
-use std::{ptr::NonNull, rc::Rc};
+use std::{convert::TryFrom, ptr::NonNull, rc::Rc};
 
 use thiserror::Error;
 
@@ -193,7 +193,7 @@ pub mod wmh {
 pub mod ewmh {
     use std::{borrow::Borrow, ffi::CString, ops::Index, os::raw::c_long};
 
-    use strum::{EnumCount, EnumIter};
+    use strum::{EnumCount, EnumIter, FromRepr};
     use x11::xlib::{Atom, XA_ATOM};
 
     use super::{
@@ -201,7 +201,9 @@ pub mod ewmh {
         Display,
     };
 
-    #[derive(Debug, PartialEq, Eq, EnumIter, EnumCount, Clone, Copy)]
+    #[derive(
+        Debug, PartialEq, Eq, EnumIter, EnumCount, Clone, Copy, FromRepr,
+    )]
     pub enum EWMHAtom {
         NetSupported,
         NetClientList,
@@ -913,8 +915,6 @@ impl XLib {
                     ptr as *mut _ as *mut _,
                 ) == i32::from(Success)
             });
-
-        debug!("get_atom_property: {} {:?}", success, atom_out);
 
         success.then(|| atom_out).flatten()
     }
