@@ -121,6 +121,7 @@ pub mod wmh {
         WmActiveWindow,
         WmTakeFocus,
         WmState,
+        WmTransientFor,
     }
 
     #[derive(Debug, Clone)]
@@ -183,6 +184,7 @@ pub mod wmh {
                 ICCCMAtom::WmActiveWindow => "WM_ACTIVE_WINDOW",
                 ICCCMAtom::WmTakeFocus => "WM_TAKE_FOCUS",
                 ICCCMAtom::WmState => "WM_STATE",
+                ICCCMAtom::WmTransientFor => "WM_TRANSIENT_FOR",
             }
         }
     }
