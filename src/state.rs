@@ -4,7 +4,9 @@ use log::{error, info};
 
 use x11::xlib::{self, Window};
 
-use crate::backends::window_event::{FullscreenEvent, FullscreenState};
+use crate::backends::window_event::{
+    FullscreenEvent, FullscreenState, WindowNameEvent,
+};
 use crate::util::{Point, Size};
 use crate::{
     backends::{
@@ -499,6 +501,9 @@ where
 
                         self.arrange_clients();
                     }
+                }
+                WindowEvent::WindowNameEvent(WindowNameEvent { .. }) => {
+                    info!("{:#?}", event);
                 }
 
                 // i dont think i actually have to handle destroy notify events.

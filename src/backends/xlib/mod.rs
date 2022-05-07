@@ -1,22 +1,10 @@
 use log::{debug, error, warn};
 use num_traits::Zero;
-<<<<<<< HEAD
-use std::{ffi::CString, mem::MaybeUninit, ptr::NonNull, rc::Rc};
-use std::{ffi::CString, rc::Rc};
->>>>>>> variant B
-use std::{ffi::CString, mem::MaybeUninit, ptr::NonNull, rc::Rc};
-======= end
+use std::{ptr::NonNull, rc::Rc};
 
 use thiserror::Error;
 
-use x11::xlib::{self, Atom, Success, Window, XEvent, XInternAtom, XKeyEvent};
-=======
-use std::{mem::MaybeUninit, ptr::NonNull, rc::Rc};
-
-use thiserror::Error;
-
-use x11::xlib::{self, Atom, XEvent, XKeyEvent};
->>>>>>> ab99fdd (refactored atoms)
+use x11::xlib::{self, Atom, Success, XEvent, XKeyEvent};
 
 use crate::backends::{
     keycodes::KeyOrButton, xlib::keysym::mouse_button_to_xbutton,
@@ -37,7 +25,7 @@ use super::{
     window_event::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, FullscreenEvent,
         FullscreenState, KeyEvent, KeyOrMouseBind, KeyState, MapEvent,
-        ModifierState, MotionEvent, UnmapEvent, WindowEvent,
+        ModifierState, MotionEvent, UnmapEvent, WindowEvent, WindowNameEvent,
     },
     WindowServerBackend,
 };
@@ -787,14 +775,27 @@ impl XLib {
                 let ev = unsafe { &event.property };
 
                 match ev.atom {
-                    atom if atom == self.ewmh_atoms[EWMHAtom::NetWmWindowType] => {
+                    atom if atom == self.ewmh_atoms[EWMHAtom::NetWmName]
+                        || atom == self.atoms[ICCCMAtom::WmName] =>
+                    {
+                        self.get_window_name(ev.window).map(|name| {
+                            XLibWindowEvent::WindowNameEvent(
+                                WindowNameEvent::new(ev.window, name),
+                            )
+                        })
+                    }
+                    atom if atom
+                        == self.ewmh_atoms[EWMHAtom::NetWmWindowType] =>
+                    {
                         if self
                             .get_atom_property(
                                 ev.window,
-                                ewmh_atoms[EWMHAtom::NetWmState],
+                                self.ewmh_atoms[EWMHAtom::NetWmState],
                             )
                             .map(|atom| {
-                                *atom == self.ewmh_atoms[EWMHAtom::NetWmStateFullscreen]
+                                *atom
+                                    == self.ewmh_atoms
+                                        [EWMHAtom::NetWmStateFullscreen]
                             })
                             .unwrap_or(false)
                         {
@@ -816,11 +817,16 @@ impl XLib {
                 let ev = unsafe { &event.client_message };
 
                 match ev.message_type {
-                    message_type if message_type == self.ewmh_atoms[EWMHAtom::NetWmState] => {
+                    message_type
+                        if message_type
+                            == self.ewmh_atoms[EWMHAtom::NetWmState] =>
+                    {
                         let data = ev.data.as_longs();
-                        if data[1] as u64 == self.ewmh_atoms[EWMHAtom::NetWmStateFullScreen]
+                        if data[1] as u64
+                            == self.ewmh_atoms[EWMHAtom::NetWmStateFullscreen]
                             || data[2] as u64
-                                == self.ewmh_atoms[EWMHAtom::NetWmStateFullscreen]
+                                == self.ewmh_atoms
+                                    [EWMHAtom::NetWmStateFullscreen]
                         {
                             debug!("fullscreen event");
                             Some(XLibWindowEvent::FullscreenEvent(
@@ -891,7 +897,7 @@ impl XLib {
                     &mut dl0,
                     &mut dl1,
                     ptr as *mut _ as *mut _,
-                ) == Success.into()
+                ) == i32::from(Success)
             });
 
         debug!("get_atom_property: {} {:?}", success, atom_out);

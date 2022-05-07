@@ -17,6 +17,7 @@ pub enum WindowEvent<Window> {
     EnterEvent(EnterEvent<Window>),
     ConfigureEvent(ConfigureEvent<Window>),
     FullscreenEvent(FullscreenEvent<Window>), //1 { window: Window, event: 1 },
+    WindowNameEvent(WindowNameEvent<Window>),
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -254,6 +255,18 @@ pub struct FullscreenEvent<Window> {
 impl<Window> FullscreenEvent<Window> {
     pub fn new(window: Window, state: FullscreenState) -> Self {
         Self { window, state }
+    }
+}
+
+#[derive(Debug)]
+pub struct WindowNameEvent<Window> {
+    pub window: Window,
+    pub name: String,
+}
+
+impl<Window> WindowNameEvent<Window> {
+    pub fn new(window: Window, name: String) -> Self {
+        Self { window, name }
     }
 }
 
