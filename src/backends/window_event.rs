@@ -1,10 +1,13 @@
 #![allow(dead_code)]
 
-use super::keycodes::{KeyOrButton, MouseButton, VirtualKeyCode};
+use super::{
+    keycodes::{KeyOrButton, MouseButton, VirtualKeyCode},
+    structs::WindowType,
+};
 use crate::util::{Point, Size};
 use bitflags::bitflags;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WindowEvent<Window> {
     KeyEvent(KeyEvent<Window>),
     ButtonEvent(ButtonEvent<Window>),
@@ -18,6 +21,7 @@ pub enum WindowEvent<Window> {
     ConfigureEvent(ConfigureEvent<Window>),
     FullscreenEvent(FullscreenEvent<Window>), //1 { window: Window, event: 1 },
     WindowNameEvent(WindowNameEvent<Window>),
+    WindowTypeChangedEvent(WindowTypeChangedEvent<Window>),
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -107,7 +111,7 @@ impl Into<u8> for ModifierKey {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyEvent<Window> {
     pub window: Window,
     pub state: KeyState,
@@ -131,7 +135,7 @@ impl<Window> KeyEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ButtonEvent<Window> {
     pub window: Window,
     pub state: KeyState,
@@ -158,7 +162,7 @@ impl<Window> ButtonEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MotionEvent<Window> {
     pub position: Point<i32>,
     pub window: Window,
@@ -170,22 +174,22 @@ impl<Window> MotionEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MapEvent<Window> {
     pub window: Window,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnmapEvent<Window> {
     pub window: Window,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EnterEvent<Window> {
     pub window: Window,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DestroyEvent<Window> {
     pub window: Window,
 }
@@ -196,7 +200,7 @@ impl<Window> DestroyEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CreateEvent<Window> {
     pub window: Window,
     pub position: Point<i32>,
@@ -213,7 +217,7 @@ impl<Window> CreateEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConfigureEvent<Window> {
     pub window: Window,
     pub position: Point<i32>,
@@ -230,7 +234,7 @@ impl<Window> ConfigureEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FullscreenState {
     On,
     Off,
@@ -246,7 +250,7 @@ impl From<bool> for FullscreenState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FullscreenEvent<Window> {
     pub window: Window,
     pub state: FullscreenState,
@@ -258,7 +262,7 @@ impl<Window> FullscreenEvent<Window> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WindowNameEvent<Window> {
     pub window: Window,
     pub name: String,
@@ -267,6 +271,21 @@ pub struct WindowNameEvent<Window> {
 impl<Window> WindowNameEvent<Window> {
     pub fn new(window: Window, name: String) -> Self {
         Self { window, name }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WindowTypeChangedEvent<Window> {
+    pub window: Window,
+    pub window_type: WindowType,
+}
+
+impl<Window> WindowTypeChangedEvent<Window> {
+    pub fn new(window: Window, window_type: WindowType) -> Self {
+        Self {
+            window,
+            window_type,
+        }
     }
 }
 

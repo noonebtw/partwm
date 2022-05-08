@@ -6,7 +6,7 @@ use x11::xlib::{self, Window};
 
 use crate::backends::structs::WindowType;
 use crate::backends::window_event::{
-    FullscreenEvent, FullscreenState, WindowNameEvent,
+    FullscreenEvent, FullscreenState, WindowNameEvent, WindowTypeChangedEvent,
 };
 use crate::util::{Point, Size};
 use crate::{
@@ -306,13 +306,6 @@ where
             &self.config.inactive_window_border_color,
         );
 
-        // add all already existing windows to the WM
-        if let Some(windows) = self.backend.all_windows() {
-            windows
-                .into_iter()
-                .for_each(|window| self.new_client(window));
-        }
-
         self
     }
 
@@ -431,8 +424,6 @@ where
                     self.button_event(&event);
                 }
                 WindowEvent::MapRequestEvent(MapEvent { window }) => {
-                    self.backend.handle_event(event);
-
                     if !self.clients.contains(&window) {
                         self.new_client(window);
                     }
@@ -448,28 +439,27 @@ where
                     self.do_move_resize_window(&event);
                 }
                 WindowEvent::ConfigureEvent(ConfigureEvent {
-                    window, ..
-                }) => {
-                    match self.clients.get(&window) {
-                        ClientEntry::Tiled(client)
-                        | ClientEntry::Floating(client) => {
-                            self.backend.configure_window(
-                                window,
-                                Some(client.size),
-                                Some(client.position),
-                                None,
-                            )
-                        }
-                        ClientEntry::Vacant => self.backend.handle_event(event),
+                    window,
+                    size,
+                    position,
+                    ..
+                }) => match self.clients.get(&window) {
+                    ClientEntry::Tiled(client)
+                    | ClientEntry::Floating(client) => {
+                        self.backend.configure_window(
+                            window,
+                            Some(client.size),
+                            Some(client.position),
+                            None,
+                        )
                     }
-                    // TODO
-                    // match self.clients.get(&event.window).into_option() {
-                    //     Some(client) => self
-                    //         .xlib
-                    //         .configure_client(client, self.clients.get_border()),
-                    //     None => self.xlib.configure_window(event),
-                    // }
-                }
+                    ClientEntry::Vacant => self.backend.configure_window(
+                        window,
+                        Some(size),
+                        Some(position),
+                        None,
+                    ),
+                },
                 WindowEvent::FullscreenEvent(FullscreenEvent {
                     window,
                     state,
@@ -505,6 +495,14 @@ where
                 }
                 WindowEvent::WindowNameEvent(WindowNameEvent { .. }) => {
                     info!("{:#?}", event);
+                }
+                WindowEvent::WindowTypeChangedEvent(
+                    WindowTypeChangedEvent {
+                        window,
+                        window_type,
+                    },
+                ) => {
+                    self.clients.update_window_type(&window, window_type);
                 }
 
                 // i dont think i actually have to handle destroy notify events.

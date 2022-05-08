@@ -24,3 +24,4 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
 num-traits = "0.2.14"
 strum = {version = "0.24.0", features = ["derive"]}
+bytemuck = "1.0.0"

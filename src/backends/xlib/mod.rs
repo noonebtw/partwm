@@ -4,14 +4,14 @@ use std::{convert::TryFrom, ptr::NonNull, rc::Rc};
 
 use thiserror::Error;
 
-use x11::xlib::{self, Atom, Success, XEvent, XKeyEvent};
+use x11::xlib::{self, Atom, Success, Window, XEvent, XKeyEvent, XA_WINDOW};
 
 use crate::backends::{
     keycodes::KeyOrButton, xlib::keysym::mouse_button_to_xbutton,
 };
 
 use self::{
-    connection::XLibConnection,
+    connection::{PropMode, XLibConnection},
     ewmh::{EWMHAtom, EWMHAtoms},
     keysym::{
         keysym_to_virtual_keycode, virtual_keycode_to_keysym,
@@ -27,6 +27,7 @@ use super::{
         ButtonEvent, ConfigureEvent, DestroyEvent, EnterEvent, FullscreenEvent,
         FullscreenState, KeyEvent, KeyOrMouseBind, KeyState, MapEvent,
         ModifierState, MotionEvent, UnmapEvent, WindowEvent, WindowNameEvent,
+        WindowTypeChangedEvent,
     },
     WindowServerBackend,
 };
@@ -35,7 +36,7 @@ use crate::util::{Point, Size};
 pub mod color;
 pub mod keysym;
 
-pub type XLibWindowEvent = WindowEvent<xlib::Window>;
+pub type XLibWindowEvent = WindowEvent<Window>;
 
 #[derive(Clone)]
 pub struct Display(Rc<NonNull<x11::xlib::Display>>);
@@ -122,6 +123,7 @@ pub mod wmh {
         WmTakeFocus,
         WmState,
         WmTransientFor,
+        Utf8String,
     }
 
     #[derive(Debug, Clone)]
@@ -185,6 +187,7 @@ pub mod wmh {
                 ICCCMAtom::WmTakeFocus => "WM_TAKE_FOCUS",
                 ICCCMAtom::WmState => "WM_STATE",
                 ICCCMAtom::WmTransientFor => "WM_TRANSIENT_FOR",
+                ICCCMAtom::Utf8String => "UTF8_STRING",
             }
         }
     }
@@ -472,12 +475,14 @@ pub mod ewmh {
 pub mod connection {
     use std::{
         ffi::CString,
+        mem::size_of,
         os::raw::{c_char, c_long},
     };
 
+    use bytemuck::from_bytes;
     use x11::xlib::{self, Atom, Window};
 
-    use super::Display;
+    use super::{xpointer::XPointer, Display};
 
     pub struct XLibConnection {
         display: Display,
@@ -539,6 +544,61 @@ pub mod connection {
             self.screen
         }
 
+        pub fn get_window_property(
+            &self,
+            window: Window,
+            atom: Atom,
+            atom_type: Atom,
+        ) -> Option<Vec<u8>> {
+            let mut format_returned = 0;
+            let mut items_returned = 0;
+            let mut bytes_after_return = 0;
+            let mut type_returned = 0;
+
+            let (ptr, success) =
+                XPointer::<u8>::build_with_result(|ptr| unsafe {
+                    xlib::XGetWindowProperty(
+                        self.dpy(),
+                        window,
+                        atom,
+                        0,
+                        4096 / 4,
+                        0,
+                        atom_type,
+                        &mut type_returned,
+                        &mut format_returned,
+                        &mut items_returned,
+                        &mut bytes_after_return,
+                        ptr as *mut _ as *mut _,
+                    ) == i32::from(xlib::Success)
+                });
+
+            success.then(|| ptr).flatten().map(|ptr| {
+                unsafe {
+                    std::slice::from_raw_parts(
+                        ptr.as_ptr(),
+                        items_returned as usize * format_returned as usize,
+                    )
+                }
+                .to_vec()
+            })
+        }
+
+        pub fn get_property_long(
+            &self,
+            window: Window,
+            atom: Atom,
+            atom_type: Atom,
+        ) -> Option<Vec<c_long>> {
+            self.get_window_property(window, atom, atom_type)
+                .map(|bytes| {
+                    bytes
+                        .chunks(size_of::<c_long>())
+                        .map(|bytes| *from_bytes::<c_long>(bytes))
+                        .collect::<Vec<_>>()
+                })
+        }
+
         pub fn get_text_property(
             &self,
             window: Window,
@@ -565,8 +625,15 @@ pub mod connection {
             }
         }
 
-        pub fn change_root_property_byte<T: AsRef<[u8]>>(
+        pub fn delete_property(&self, window: Window, atom: Atom) {
+            unsafe {
+                xlib::XDeleteProperty(self.dpy(), window, atom);
+            }
+        }
+
+        pub fn change_property_byte<T: AsRef<[u8]>>(
             &self,
+            window: Window,
             atom: Atom,
             atom_type: Atom,
             mode: PropMode,
@@ -575,10 +642,42 @@ pub mod connection {
             unsafe {
                 xlib::XChangeProperty(
                     self.dpy(),
-                    self.root,
+                    window,
                     atom,
                     atom_type,
                     8,
+                    mode.into(),
+                    data.as_ref().as_ptr().cast::<u8>(),
+                    data.as_ref().len() as i32,
+                );
+            }
+        }
+
+        pub fn change_root_property_byte<T: AsRef<[u8]>>(
+            &self,
+            atom: Atom,
+            atom_type: Atom,
+            mode: PropMode,
+            data: T,
+        ) {
+            self.change_property_byte(self.root, atom, atom_type, mode, data)
+        }
+
+        pub fn change_property_long<T: AsRef<[c_long]>>(
+            &self,
+            window: Window,
+            atom: Atom,
+            atom_type: Atom,
+            mode: PropMode,
+            data: T,
+        ) {
+            unsafe {
+                xlib::XChangeProperty(
+                    self.dpy(),
+                    window,
+                    atom,
+                    atom_type,
+                    32,
                     mode.into(),
                     data.as_ref().as_ptr().cast::<u8>(),
                     data.as_ref().len() as i32,
@@ -593,18 +692,7 @@ pub mod connection {
             mode: PropMode,
             data: T,
         ) {
-            unsafe {
-                xlib::XChangeProperty(
-                    self.dpy(),
-                    self.root,
-                    atom,
-                    atom_type,
-                    32,
-                    mode.into(),
-                    data.as_ref().as_ptr().cast::<u8>(),
-                    data.as_ref().len() as i32,
-                );
-            }
+            self.change_property_long(self.root, atom, atom_type, mode, data)
         }
     }
 }
@@ -627,12 +715,12 @@ impl Display {
 
 pub struct XLib {
     connection: Rc<XLibConnection>,
-    //atoms: XLibAtoms,
     atoms: ICCCMAtoms,
     ewmh_atoms: EWMHAtoms,
     keybinds: Vec<KeyOrMouseBind>,
     active_border_color: Option<color::XftColor>,
     inactive_border_color: Option<color::XftColor>,
+    wm_window: Window,
 }
 
 impl XLib {
@@ -648,6 +736,19 @@ impl XLib {
             keybinds: Vec::new(),
             active_border_color: None,
             inactive_border_color: None,
+            wm_window: unsafe {
+                xlib::XCreateSimpleWindow(
+                    con.dpy(),
+                    con.root(),
+                    0,
+                    0,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                )
+            },
         }
     }
 
@@ -680,6 +781,34 @@ impl XLib {
         xlib::XSync(self.dpy(), 0);
 
         self.ewmh_atoms.set_supported_atoms(self.connection.clone());
+        self.connection.delete_property(
+            self.connection.root(),
+            self.ewmh_atoms[EWMHAtom::NetClientList],
+        );
+
+        self.connection.change_property_long(
+            self.wm_window,
+            self.ewmh_atoms[EWMHAtom::NetSupportingWmCheck],
+            XA_WINDOW,
+            PropMode::Replace,
+            &[self.wm_window as i64],
+        );
+
+        self.connection.change_property_long(
+            self.connection.root(),
+            self.ewmh_atoms[EWMHAtom::NetSupportingWmCheck],
+            XA_WINDOW,
+            PropMode::Replace,
+            &[self.wm_window as i64],
+        );
+
+        self.connection.change_property_byte(
+            self.wm_window,
+            self.ewmh_atoms[EWMHAtom::NetWmName],
+            self.atoms[ICCCMAtom::Utf8String],
+            PropMode::Replace,
+            "nirgendwm".as_bytes(),
+        );
     }
 
     //#[deprecated = "use `self.connection.dpy()` instead"]
@@ -803,28 +932,12 @@ impl XLib {
                     atom if atom
                         == self.ewmh_atoms[EWMHAtom::NetWmWindowType] =>
                     {
-                        if self
-                            .get_atom_property(
+                        Some(XLibWindowEvent::WindowTypeChangedEvent(
+                            WindowTypeChangedEvent::new(
                                 ev.window,
-                                self.ewmh_atoms[EWMHAtom::NetWmState],
-                            )
-                            .map(|atom| {
-                                *atom
-                                    == self.ewmh_atoms
-                                        [EWMHAtom::NetWmStateFullscreen]
-                            })
-                            .unwrap_or(false)
-                        {
-                            debug!("fullscreen event");
-                            Some(XLibWindowEvent::FullscreenEvent(
-                                FullscreenEvent::new(
-                                    ev.window,
-                                    FullscreenState::On,
-                                ),
-                            ))
-                        } else {
-                            None
-                        }
+                                self.get_window_type(ev.window),
+                            ),
+                        ))
                     }
                     _ => None,
                 }
@@ -872,7 +985,7 @@ impl XLib {
     #[allow(dead_code)]
     fn get_window_attributes(
         &self,
-        window: xlib::Window,
+        window: Window,
     ) -> Option<xlib::XWindowAttributes> {
         let mut wa = unsafe {
             std::mem::MaybeUninit::<xlib::XWindowAttributes>::zeroed()
@@ -890,7 +1003,7 @@ impl XLib {
 
     fn get_atom_property(
         &self,
-        window: xlib::Window,
+        window: Window,
         atom: xlib::Atom,
     ) -> Option<xpointer::XPointer<xlib::Atom>> {
         let mut di = 0;
@@ -919,11 +1032,7 @@ impl XLib {
         success.then(|| atom_out).flatten()
     }
 
-    fn check_for_protocol(
-        &self,
-        window: xlib::Window,
-        proto: xlib::Atom,
-    ) -> bool {
+    fn check_for_protocol(&self, window: Window, proto: xlib::Atom) -> bool {
         let mut protos: *mut xlib::Atom = std::ptr::null_mut();
         let mut num_protos: i32 = 0;
 
@@ -946,7 +1055,7 @@ impl XLib {
         return false;
     }
 
-    fn send_protocol(&self, window: xlib::Window, proto: Atom) -> bool {
+    fn send_protocol(&self, window: Window, proto: Atom) -> bool {
         if self.check_for_protocol(window, proto) {
             let mut data = xlib::ClientMessageData::default();
             data.set_long(0, proto as i64);
@@ -1032,11 +1141,7 @@ impl XLib {
         None
     }
 
-    fn grab_key_or_button(
-        &self,
-        binding: &KeyOrMouseBind,
-        window: xlib::Window,
-    ) {
+    fn grab_key_or_button(&self, binding: &KeyOrMouseBind, window: Window) {
         let modmask = binding.modifiers.as_modmask(self);
 
         let numlock_mask = self
@@ -1090,11 +1195,7 @@ impl XLib {
     }
 
     #[allow(dead_code)]
-    fn ungrab_key_or_button(
-        &self,
-        binding: &KeyOrMouseBind,
-        window: xlib::Window,
-    ) {
+    fn ungrab_key_or_button(&self, binding: &KeyOrMouseBind, window: Window) {
         let modmask = binding.modifiers.as_modmask(self);
 
         let numlock_mask = self
@@ -1135,7 +1236,7 @@ impl XLib {
         }
     }
 
-    fn grab_global_keybinds(&self, window: xlib::Window) {
+    fn grab_global_keybinds(&self, window: Window) {
         for binding in self.keybinds.iter() {
             self.grab_key_or_button(binding, window);
         }
@@ -1197,7 +1298,7 @@ impl ModifierStateExt for ModifierState {
 }
 
 impl WindowServerBackend for XLib {
-    type Window = xlib::Window;
+    type Window = Window;
 
     fn build() -> Self {
         let xlib = Self::new();
@@ -1211,6 +1312,7 @@ impl WindowServerBackend for XLib {
             let ev = self.xevent_to_window_event(ev);
 
             if let Some(ev) = ev {
+                self.handle_event(ev.clone());
                 return ev;
             }
         }
@@ -1236,14 +1338,34 @@ impl WindowServerBackend for XLib {
                 }
 
                 self.grab_global_keybinds(event.window);
-            }
-            WindowEvent::ConfigureEvent(event) => {
-                self.configure_window(
-                    event.window,
-                    Some(event.size),
-                    Some(event.position),
-                    None,
+
+                // add window to client list
+                self.connection.change_root_property_long(
+                    self.ewmh_atoms[EWMHAtom::NetClientList],
+                    XA_WINDOW,
+                    PropMode::Append,
+                    &[event.window as i64],
                 );
+            }
+            WindowEvent::DestroyEvent(event) => {
+                self.connection
+                    .get_property_long(
+                        self.connection.root(),
+                        self.ewmh_atoms[EWMHAtom::NetClientList],
+                        XA_WINDOW,
+                    )
+                    .map(|mut clients| {
+                        clients
+                            .retain(|&window| window as Window != event.window);
+
+                        self.connection.change_property_long(
+                            self.connection.root(),
+                            self.ewmh_atoms[EWMHAtom::NetClientList],
+                            XA_WINDOW,
+                            PropMode::Replace,
+                            &clients,
+                        );
+                    });
             }
             _ => {}
         }
@@ -1611,6 +1733,10 @@ pub mod xpointer {
             let mut ptr = null() as *const ();
             let result = cb(&mut ptr);
             (NonNull::new(ptr as *mut T).map(|ptr| Self(ptr)), result)
+        }
+
+        pub fn as_ptr(&self) -> *const T {
+            self.0.as_ptr() as *const _
         }
     }
 
