@@ -1,11 +1,11 @@
 [package]
 name = "wm"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["noonebtw <noonebtw@gmail.com>"]
 edition = "2018"
 
 [[bin]]
-name = "nowm"
+name = "nirgendwm"
 path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

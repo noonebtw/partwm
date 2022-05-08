@@ -21,7 +21,7 @@ fn init_logger() {
 
     let _logfile = FileAppender::builder()
         .encoder(encoder)
-        .build(home.join(".local/portlights.log"))
+        .build(home.join(".local/nirgendwm.log"))
         .unwrap();
 
     let config = Config::builder()
@@ -44,7 +44,7 @@ fn main() {
     log_prologue();
 
     let mut config_path = std::path::PathBuf::from(env!("HOME"));
-    config_path.push(".config/nowm.toml");
+    config_path.push(".config/nirgendwm.toml");
 
     let config = std::fs::File::open(config_path)
         .and_then(|mut file| {
