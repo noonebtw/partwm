@@ -606,6 +606,20 @@ impl ClientState {
         }
     }
 
+    pub fn update_window_type<K>(&mut self, key: &K, window_type: WindowType)
+    where
+        K: ClientKey,
+    {
+        if let Some(client) = self.get_mut(key).into_option() {
+            client.window_type = window_type;
+
+            match window_type {
+                WindowType::Normal => self.set_floating(key),
+                _ => self.set_tiled(key),
+            };
+        }
+    }
+
     fn remove_from_virtual_screens<K>(&mut self, key: &K)
     where
         K: ClientKey,
