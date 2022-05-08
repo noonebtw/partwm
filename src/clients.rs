@@ -4,13 +4,17 @@ use indexmap::IndexMap;
 use log::error;
 use num_traits::Zero;
 
+use crate::backends::structs::WindowType;
 use crate::util::BuildIdentityHasher;
 use crate::util::{Point, Size};
 
 mod client {
     use std::hash::{Hash, Hasher};
 
-    use crate::util::{Point, Size};
+    use crate::{
+        backends::structs::WindowType,
+        util::{Point, Size},
+    };
     use x11::xlib::Window;
 
     #[derive(Clone, Debug)]
@@ -18,7 +22,8 @@ mod client {
         pub(crate) window: Window,
         pub(crate) size: Size<i32>,
         pub(crate) position: Point<i32>,
-        pub(crate) transient_for: Option<Window>,
+        pub(crate) parent_window: Option<Window>,
+        pub(crate) window_type: WindowType,
         pub(crate) fullscreen: bool,
     }
 
@@ -28,8 +33,9 @@ mod client {
                 window: 0,
                 size: (100, 100).into(),
                 position: (0, 0).into(),
-                transient_for: None,
+                parent_window: None,
                 fullscreen: false,
+                window_type: WindowType::Normal,
             }
         }
     }
@@ -49,7 +55,7 @@ mod client {
             }
         }
 
-        pub fn new_transient(
+        pub fn new_dialog(
             window: Window,
             size: Size<i32>,
             transient: Window,
@@ -57,7 +63,7 @@ mod client {
             Self {
                 window,
                 size,
-                transient_for: Some(transient),
+                parent_window: Some(transient),
                 ..Default::default()
             }
         }
@@ -67,6 +73,24 @@ mod client {
                 window,
                 ..Default::default()
             }
+        }
+
+        pub fn with_window_type(self, window_type: WindowType) -> Self {
+            Self {
+                window_type,
+                ..self
+            }
+        }
+
+        pub fn with_parent_window(self, parent_window: Option<Window>) -> Self {
+            Self {
+                parent_window,
+                ..self
+            }
+        }
+
+        pub fn with_size(self, size: Size<i32>) -> Self {
+            Self { size, ..self }
         }
 
         /// toggles the clients fullscreen flag.
@@ -90,8 +114,8 @@ mod client {
             self.fullscreen
         }
 
-        pub fn is_transient(&self) -> bool {
-            self.transient_for.is_some()
+        pub fn has_parent_window(&self) -> bool {
+            self.parent_window.is_some()
         }
     }
 
@@ -240,26 +264,41 @@ impl ClientState {
     pub fn insert(&mut self, mut client: Client) -> Option<&Client> {
         let key = client.key();
 
-        if client.is_transient()
-            && self.contains(&client.transient_for.unwrap())
-        {
-            let transient = self.get(&client.transient_for.unwrap()).unwrap();
+        match client.window_type {
+            // idk how to handle docks and desktops, for now they float innit
+            WindowType::Splash
+            | WindowType::Dialog
+            | WindowType::Utility
+            | WindowType::Menu
+            | WindowType::Toolbar
+            | WindowType::Dock
+            | WindowType::Desktop => {
+                if let Some(parent) = client
+                    .parent_window
+                    .and_then(|window| self.get(&window).into_option())
+                {
+                    client.position = {
+                        (
+                            parent.position.x
+                                + (parent.size.width - client.size.width) / 2,
+                            parent.position.y
+                                + (parent.size.height - client.size.height) / 2,
+                        )
+                            .into()
+                    };
+                }
 
-            client.position = {
-                (
-                    transient.position.x
-                        + (transient.size.width - client.size.width) / 2,
-                    transient.position.y
-                        + (transient.size.height - client.size.height) / 2,
-                )
-                    .into()
-            };
+                client.size = client.size.clamp(
+                    self.screen_size
+                        - Size::new(self.border_size * 2, self.border_size * 2),
+                );
 
-            self.floating_clients.insert(key, client);
-        } else {
-            self.clients.insert(key, client);
-
-            self.virtual_screens.get_mut_current().insert(&key);
+                self.floating_clients.insert(key, client);
+            }
+            WindowType::Normal => {
+                self.clients.insert(key, client);
+                self.virtual_screens.get_mut_current().insert(&key);
+            }
         }
 
         // adding a client changes the liling layout, rearrange
@@ -320,7 +359,15 @@ impl ClientState {
     }
 
     pub fn iter_transient(&self) -> impl Iterator<Item = (&u64, &Client)> {
-        self.iter_floating().filter(|&(_, c)| c.is_transient())
+        self.iter_floating().filter(|&(_, c)| c.has_parent_window())
+    }
+
+    pub fn iter_by_window_type(
+        &self,
+        window_type: WindowType,
+    ) -> impl Iterator<Item = (&u64, &Client)> {
+        self.iter_floating()
+            .filter(move |&(_, c)| c.window_type == window_type)
     }
 
     pub fn iter_visible(&self) -> impl Iterator<Item = (&u64, &Client)> {
@@ -357,7 +404,7 @@ impl ClientState {
     {
         match self.get(key) {
             ClientEntry::Floating(c) => {
-                if let Some(transient_for) = c.transient_for {
+                if let Some(transient_for) = c.parent_window {
                     self.is_client_visible(&transient_for)
                 } else {
                     true
@@ -491,6 +538,23 @@ impl ClientState {
     }
 
     /**
+    Sets a floating client to tiled and returns true, does nothing for a tiled client and
+    returns false. If this function returns `true` you have to call `arrange_clients` after.
+     */
+    pub fn set_tiled<K>(&mut self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        if self.get(key).is_floating() {
+            self.toggle_floating(key);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /**
     This function invalidates the tiling, call `arrange_clients` to fix it again (it doesn't do it
     automatically since xlib has to move and resize all windows anyways).
     */
@@ -519,14 +583,14 @@ impl ClientState {
                 }
                 (None, Some(floating_client)) => {
                     // transient clients cannot be tiled
-                    match floating_client.is_transient() {
-                        true => {
-                            self.floating_clients.insert(key, floating_client);
-                        }
-
-                        false => {
+                    // only normal windows can be tiled
+                    match floating_client.window_type {
+                        WindowType::Normal => {
                             self.clients.insert(key, floating_client);
                             self.virtual_screens.get_mut_current().insert(&key);
+                        }
+                        _ => {
+                            self.floating_clients.insert(key, floating_client);
                         }
                     }
                 }
@@ -539,6 +603,20 @@ impl ClientState {
 
             // we added or removed a client from the tiling so the layout changed, rearrange
             self.arrange_virtual_screen();
+        }
+    }
+
+    pub fn update_window_type<K>(&mut self, key: &K, window_type: WindowType)
+    where
+        K: ClientKey,
+    {
+        if let Some(client) = self.get_mut(key).into_option() {
+            client.window_type = window_type;
+
+            match window_type {
+                WindowType::Normal => self.set_floating(key),
+                _ => self.set_tiled(key),
+            };
         }
     }
 

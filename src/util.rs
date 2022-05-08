@@ -123,6 +123,13 @@ mod size {
             (self.width, self.height)
         }
 
+        pub fn clamp(self, other: Self) -> Self {
+            Self::new(
+                self.width.min(other.width),
+                self.height.min(other.height),
+            )
+        }
+
         pub fn map<F>(self, f: F) -> Self
         where
             F: FnOnce(I, I) -> Self,
