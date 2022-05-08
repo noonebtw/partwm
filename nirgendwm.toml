@@ -1,0 +1,8 @@
+num_virtualscreens = 10
+mod_key = "Super"
+gap = 10
+border_width = 5
+active_window_border_color = "#6E0AC4"
+inactive_window_border_color = "#CE9CFA"
+kill_clients_on_exit = false
+terminal_command = ["alacritty", []]
