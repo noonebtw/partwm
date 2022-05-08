@@ -50,7 +50,7 @@ impl WMConfig {
     }
 
     fn default_terminal() -> (String, Vec<String>) {
-        ("alacritty".to_string(), vec![])
+        ("xterm".to_string(), vec![])
     }
 }
 
