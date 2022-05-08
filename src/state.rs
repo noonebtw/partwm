@@ -37,6 +37,7 @@ pub struct WMConfig {
     inactive_window_border_color: String,
     #[serde(default = "WMConfig::default_terminal")]
     terminal_command: (String, Vec<String>),
+    border_width: Option<i32>,
 }
 
 impl WMConfig {
@@ -65,6 +66,7 @@ impl Default for WMConfig {
             inactive_window_border_color:
                 Self::default_inactive_window_border_color(),
             terminal_command: Self::default_terminal(),
+            border_width: Some(1),
         }
     }
 }
@@ -145,7 +147,7 @@ where
         let clients = ClientState::new()
             .with_virtualscreens(config.num_virtualscreens)
             .with_gap(config.gap.unwrap_or(1))
-            .with_border(1)
+            .with_border(config.border_width.unwrap_or(1))
             .with_screen_size(backend.screen_size());
 
         Self {
@@ -480,6 +482,21 @@ where
                             self.clients.toggle_fullscreen(&window)
                         }
                     } {
+                        if let Some(client) =
+                            self.clients.get(&window).into_option()
+                        {
+                            self.backend.configure_window(
+                                window,
+                                None,
+                                None,
+                                if client.is_fullscreen() {
+                                    Some(0)
+                                } else {
+                                    Some(self.clients.get_border())
+                                },
+                            );
+                        };
+
                         self.arrange_clients();
                     }
                 }

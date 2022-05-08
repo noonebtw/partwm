@@ -442,11 +442,12 @@ impl ClientState {
             .unwrap_or(false)
     }
 
+    /// returns `true` if window layout changed
     pub fn toggle_fullscreen<K>(&mut self, key: &K) -> bool
     where
         K: ClientKey,
     {
-        if self.inner_toggle_fullscreen(key) {
+        if let Some(_new_fullscreen_state) = self.inner_toggle_fullscreen(key) {
             self.arrange_virtual_screen();
             true
         } else {
@@ -454,24 +455,22 @@ impl ClientState {
         }
     }
 
-    fn inner_toggle_fullscreen<K>(&mut self, key: &K) -> bool
+    fn inner_toggle_fullscreen<K>(&mut self, key: &K) -> Option<bool>
     where
         K: ClientKey,
     {
-        let fullscreen_size = self.screen_size
-            - Size::new(self.border_size * 2, self.border_size * 2);
+        let fullscreen_size = self.screen_size;
 
-        match self.get_mut(key).into_option() {
-            Some(client) => {
-                if client.toggle_fullscreen() {
-                    client.size = fullscreen_size;
-                    client.position = Point::zero();
-                }
+        self.get_mut(key).into_option().map(|client| {
+            if client.toggle_fullscreen() {
+                client.size = fullscreen_size;
+                client.position = Point::zero();
 
                 true
+            } else {
+                false
             }
-            None => false,
-        }
+        })
     }
 
     /**
@@ -760,10 +759,7 @@ impl ClientState {
             border: i32,
         ) -> (Size<i32>, Point<i32>) {
             if fullscreen {
-                let size = Size::new(
-                    screen_size.width - border * 2,
-                    screen_size.height - border * 2,
-                );
+                let size = Size::new(screen_size.width, screen_size.height);
                 let pos = Point::new(0, 0);
                 (size, pos)
             } else {
