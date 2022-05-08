@@ -538,6 +538,23 @@ impl ClientState {
     }
 
     /**
+    Sets a floating client to tiled and returns true, does nothing for a tiled client and
+    returns false. If this function returns `true` you have to call `arrange_clients` after.
+     */
+    pub fn set_tiled<K>(&mut self, key: &K) -> bool
+    where
+        K: ClientKey,
+    {
+        if self.get(key).is_floating() {
+            self.toggle_floating(key);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /**
     This function invalidates the tiling, call `arrange_clients` to fix it again (it doesn't do it
     automatically since xlib has to move and resize all windows anyways).
     */
